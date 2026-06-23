@@ -2,7 +2,32 @@
 
 > 一个面向运筹优化场景的本地 Agent 系统：支持自然语言提问、CSV/JSON 数据输入、RAG 建模知识检索、工具调用与优化求解。
 
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white)
+![Gurobi](https://img.shields.io/badge/Gurobi-Optimizer-E87722)
+![RAG](https://img.shields.io/badge/RAG-Knowledge%20Augmented-4A90E2)
+![LangChain](https://img.shields.io/badge/LangChain-Agent%20Tools-1C3C3C)
+![SQLite](https://img.shields.io/badge/SQLite-Local%20Storage-003B57?logo=sqlite&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green)
+
 该项目尝试把 **自然语言理解、结构化建模、RAG、工具路由、求解器执行、结果解释** 串成一条完整闭环，让用户可以像和分析助手对话一样提出优化问题，并得到可审计、可解释、可执行的求解结果。
+
+## 目录
+
+- [项目的优势](#项目的优势)
+- [效果图](#效果图)
+- [架构图](#架构图)
+- [当前能力](#当前能力)
+- [已支持的可执行问题](#已支持的可执行问题)
+- [系统如何工作](#系统如何工作)
+- [CSV 处理策略](#csv-处理策略)
+- [RAG 与 MCP 在项目中的角色](#rag-与-mcp-在项目中的角色)
+- [工具体系](#工具体系)
+- [快速开始](#快速开始)
+- [项目结构](#项目结构)
+- [数据示例](#数据示例)
+- [已知边界](#已知边界)
+- [后续方向](#后续方向)
 
 ## 项目的优势
 
