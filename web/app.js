@@ -852,8 +852,8 @@ function buildPrimaryMetrics(result) {
   if (result.transport_cost !== null && result.transport_cost !== undefined) {
     items.push({ label: "运输成本", value: fmt(result.transport_cost) });
   }
-  (metrics.extra || []).slice(0, 3).forEach((item) => {
-    items.push({ label: item.label, value: fmt(item.value), suffix: item.suffix || "" });
+  (metrics.extra || []).slice(0, 4).forEach((item, index) => {
+    items.push({ label: item.label, value: fmt(item.value), suffix: item.suffix || "", primary: !items.length && index === 0 });
   });
   return items;
 }

@@ -63,8 +63,9 @@ def handle_ask(
 
     agent_plan, plan_warning = _llm_agent_plan(question, uploaded_context, llm_config)
     preferred_template = agent_plan.get("template_id") if agent_plan else None
+    solver_intent = _should_solve_optimization(question)
 
-    uploaded_generic = _solve_uploaded_generic(question, uploaded_context, preferred_template)
+    uploaded_generic = _solve_uploaded_generic(question, uploaded_context, preferred_template) if solver_intent else None
     if uploaded_generic and requested_dataset_id is None:
         response = _build_uploaded_generic_response(question, uploaded_generic, agent_plan, plan_warning)
         response["conversation_id"] = conversation_id
@@ -73,6 +74,13 @@ def handle_ask(
         return response
 
     uploaded_facility = _facility_data_from_uploaded_files(uploaded_context)
+    if uploaded_facility and requested_dataset_id is None and _is_facility_question(question, preferred_template) and not solver_intent:
+        response = _answer_from_facility_analysis(question, uploaded_facility, plan_warning)
+        response["conversation_id"] = conversation_id
+        response["run_id"] = save_run(None, question, response["answer"], response, user_id=user_id, conversation_id=conversation_id)
+        touch_conversation(conversation_id, question)
+        return response
+
     if uploaded_facility and requested_dataset_id is None and _is_facility_question(question, preferred_template):
         response = _answer_from_facility_data(question, uploaded_facility, llm_config, mcp_config, plan_warning)
         response["conversation_id"] = conversation_id
@@ -80,7 +88,7 @@ def handle_ask(
         touch_conversation(conversation_id, question)
         return response
 
-    if requested_dataset_id is None and uploaded_context and _is_facility_question(question, preferred_template):
+    if solver_intent and requested_dataset_id is None and uploaded_context and _is_facility_question(question, preferred_template):
         llm_facility, llm_mapping_warning = _facility_data_from_llm_mapping(question, uploaded_context, llm_config)
         if llm_facility:
             warnings = "; ".join(filter(None, [plan_warning, llm_mapping_warning])) or None
@@ -97,11 +105,18 @@ def handle_ask(
             touch_conversation(conversation_id, question)
             return response
 
-    json_generic = _solve_json_generic(question, preferred_template)
+    json_generic = _solve_json_generic(question, preferred_template) if solver_intent else None
     if json_generic and requested_dataset_id is None:
         response = _build_uploaded_generic_response(question, json_generic, agent_plan, plan_warning)
         response["conversation_id"] = conversation_id
         response["run_id"] = save_run(None, question, response["answer"], response, user_id=user_id, conversation_id=conversation_id)
+        touch_conversation(conversation_id, question)
+        return response
+
+    if dataset_id is not None and _is_facility_question(question, preferred_template) and not solver_intent:
+        response = _answer_from_facility_analysis(question, load_dataset(dataset_id), plan_warning)
+        response["conversation_id"] = conversation_id
+        response["run_id"] = save_run(dataset_id, question, response["answer"], response, user_id=user_id, conversation_id=conversation_id)
         touch_conversation(conversation_id, question)
         return response
 
@@ -280,6 +295,73 @@ def _answer_from_facility_data(
         "mcp_status": "未使用 MCP。",
         "warehouse_summary": warehouse_summary,
         "allocations": allocations,
+    }
+
+
+def _answer_from_facility_analysis(question: str, data: SupplyChainData, plan_warning: str | None = None) -> dict:
+    problem_spec = infer_problem_spec(question, data)
+    rag_pack = rag_context_pack(question)
+    rag_notes, docs = rag_summary(question)
+    profile = _facility_profile(data)
+    answer = "\n".join(
+        [
+            "结论：已基于当前对话上传的数据完成仓库网络分析，当前问题未要求直接求最优解。",
+            profile["summary"],
+            *[f"- {item}" for item in profile["recommendations"]],
+        ]
+    )
+    warnings = list(profile["risks"])
+    if plan_warning:
+        warnings.append(plan_warning)
+    return {
+        "answer": answer,
+        "structured_answer": {
+            "conclusion": "已完成仓库数据分析；当前回复不调用优化求解器。",
+            "metrics": {
+                "objective_label": "数据画像",
+                "total_cost": None,
+                "transport_cost": None,
+                "fixed_cost": profile["fixed_cost_total"],
+                "cost_delta": None,
+                "cost_delta_pct": None,
+                "extra": [
+                    {"label": "总容量", "value": profile["total_capacity"]},
+                    {"label": "总需求", "value": profile["total_demand"]},
+                    {"label": "仓库数", "value": profile["warehouse_count"]},
+                    {"label": "客户数", "value": profile["customer_count"]},
+                ],
+            },
+            "recommendations": profile["recommendations"],
+            "risks": profile["risks"] or ["当前数据画像未发现明显结构性风险。"],
+            "evidence": rag_notes[:3],
+            "raw_answer": answer,
+        },
+        "problem_spec": problem_spec.to_dict(),
+        "problem_summary": spec_summary(problem_spec),
+        "rag_context": _rag_context_preview(rag_pack),
+        "generic_result": None,
+        "question": question,
+        "status": "DATA_ANALYSIS",
+        "objective_value": None,
+        "transport_cost": None,
+        "fixed_cost": profile["fixed_cost_total"],
+        "baseline_objective": None,
+        "open_warehouses": [],
+        "scenario_changes": [],
+        "warnings": warnings,
+        "explanation": profile["recommendations"],
+        "rag_notes": rag_notes,
+        "rag_docs": [doc.title for doc in docs],
+        "tool_names": ["local_problem_router", "data_profile_tool", "rag_context_pack_tool", "risk_diagnostic_tool"],
+        "agent_steps": [
+            {"step": "识别意图", "tool": "local_problem_router", "output": "识别为数据分析/建议类问题，未触发优化求解。"},
+            {"step": "读取数据", "tool": "data_profile_tool", "output": profile["summary"]},
+            {"step": "检索知识", "tool": "rag_context_pack_tool", "output": "读取仓库选址业务规则与数据 Schema。"},
+            {"step": "生成建议", "tool": "risk_diagnostic_tool", "output": "基于容量、需求、固定成本和成本矩阵生成诊断建议。"},
+        ],
+        "mcp_status": "未使用 MCP。",
+        "warehouse_summary": profile["warehouse_summary"],
+        "allocations": [],
     }
 
 
@@ -612,6 +694,55 @@ def _default_tool_chain(template_id: str) -> list[str]:
     return ["uploaded_file_context"]
 
 
+def _should_solve_optimization(question: str) -> bool:
+    text = (question or "").lower()
+    strong_solve_keywords = [
+        "求解",
+        "最优",
+        "最小化",
+        "最大化",
+        "最大",
+        "最小",
+        "minimize",
+        "maximize",
+        "optimal",
+        "solve",
+        "选择哪些",
+        "选择哪",
+        "启用哪些",
+        "开启哪些",
+        "分配方案",
+        "客户分配",
+        "访问顺序",
+        "路径",
+        "路线",
+        "排程",
+        "排产",
+    ]
+    optimization_context = ["目标函数", "约束", "方案", "模型", "决策变量", "成本最", "利润最"]
+    analysis_keywords = [
+        "分析",
+        "建议",
+        "情况",
+        "现状",
+        "怎么看",
+        "说明",
+        "解释",
+        "总结",
+        "概览",
+        "文件",
+        "数据里",
+        "有什么",
+    ]
+    if any(keyword in text for keyword in strong_solve_keywords):
+        return True
+    if "优化" in text and any(keyword in text for keyword in optimization_context):
+        return True
+    if any(keyword in text for keyword in analysis_keywords):
+        return False
+    return False
+
+
 def _needs_external_data(question: str) -> bool:
     lowered = question.lower()
     keywords = [
@@ -660,6 +791,67 @@ def _external_data_gaps(question: str, files: list[dict]) -> list[str]:
     if has_files:
         return [f"已读取当前对话上传文件，但仍需确认：{gap}" for gap in gaps]
     return gaps
+
+
+def _facility_profile(data: SupplyChainData) -> dict:
+    total_capacity = float(data.warehouses["capacity"].sum())
+    total_demand = float(data.customers["demand"].sum())
+    ratio = total_demand / total_capacity if total_capacity else 0.0
+    fixed_cost_total = float(data.warehouses["fixed_cost"].sum()) if "fixed_cost" in data.warehouses else 0.0
+    warehouse_count = int(len(data.warehouses))
+    customer_count = int(len(data.customers))
+    summary = (
+        f"当前数据包含 {warehouse_count} 个候选仓库、{customer_count} 个客户点；"
+        f"总容量 {total_capacity:,.0f}，总需求 {total_demand:,.0f}，需求/容量比 {ratio:.1%}。"
+    )
+
+    recommendations: list[str] = []
+    risks: list[str] = []
+    if ratio > 0.9:
+        risks.append("总需求接近或超过总容量，建议优先关注扩容、应急仓或需求波动缓冲。")
+    elif ratio < 0.45:
+        recommendations.append("整体容量冗余较高，可重点评估高固定成本仓库是否需要保留。")
+    else:
+        recommendations.append("整体容量与需求比例处于可分析区间，建议进一步比较固定成本与运输成本权衡。")
+
+    capacity_rank = data.warehouses.sort_values("capacity", ascending=False).head(3)
+    if not capacity_rank.empty:
+        names = ", ".join(capacity_rank["warehouse"].astype(str).tolist())
+        recommendations.append(f"容量较大的候选仓库包括：{names}，可作为后续主力仓或区域覆盖分析重点。")
+
+    if "fixed_cost" in data.warehouses and fixed_cost_total:
+        high_fixed = data.warehouses.sort_values("fixed_cost", ascending=False).head(3)
+        names = ", ".join(
+            f"{row.warehouse}({float(row.fixed_cost):,.0f})"
+            for row in high_fixed.itertuples(index=False)
+        )
+        risks.append(f"固定成本较高的仓库包括：{names}，若运输优势不明显，可能拉高总成本。")
+
+    if not data.costs.empty:
+        cost_series = pd.to_numeric(data.costs["cost"], errors="coerce").dropna()
+        if not cost_series.empty:
+            recommendations.append(
+                f"运输成本范围为 {cost_series.min():,.0f} 到 {cost_series.max():,.0f}，建议关注高成本线路是否可替代。"
+            )
+
+    warehouse_summary = data.warehouses.copy()
+    warehouse_summary["used_capacity"] = 0.0
+    warehouse_summary["is_open"] = 0
+    warehouse_summary["active_fixed_cost"] = 0.0
+    warehouse_summary["remaining_capacity"] = warehouse_summary["capacity"]
+    warehouse_summary["utilization"] = 0.0
+    return {
+        "summary": summary,
+        "warehouse_count": warehouse_count,
+        "customer_count": customer_count,
+        "total_capacity": total_capacity,
+        "total_demand": total_demand,
+        "demand_capacity_ratio": ratio,
+        "fixed_cost_total": fixed_cost_total,
+        "recommendations": recommendations,
+        "risks": risks,
+        "warehouse_summary": warehouse_summary.to_dict(orient="records"),
+    }
 
 
 def _tool_names_for_web_research(agent_plan: dict | None = None) -> list[str]:
