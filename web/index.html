@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OptiAgent</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260623-result-focus" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar">
+        <div class="window-dots" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </div>
+
+        <label class="search-box" for="conversationSearch">
+
+          <input id="conversationSearch" type="search" placeholder="搜索对话" autocomplete="off" />
+        </label>
+
+        <section class="nav-section">
+          <div class="brand-mark">OA</div>
+          <div>
+            <strong>OptiAgent</strong>
+            <span>运筹优化对话助手</span>
+          </div>
+        </section>
+
+        <section class="side-block history-block">
+          <div class="side-title history-title">
+            <span>对话历史</span>
+            <div class="history-actions">
+              <button id="newConversationBtn">新建</button>
+              <button id="clearHistoryBtn">清除</button>
+            </div>
+          </div>
+          <div id="historyList" class="list compact"></div>
+        </section>
+
+        <div class="user-card">
+          <input id="usernameInput" placeholder="用户名" />
+          <button id="loginBtn">登录</button>
+          <span id="userState">未登录</span>
+        </div>
+      </aside>
+
+      <section class="chat-area">
+        <header class="chat-header">
+          <div class="title-group">
+            <h1>OptiAgent</h1>
+            <span>用自然语言完成运筹优化问题的求解</span>
+          </div>
+          <div class="top-actions">
+            <button data-panel="uploadPanel">数据</button>
+            <button data-panel="llmPanel">模型</button>
+            <button data-panel="mcpPanel">MCP</button>
+            <button id="refreshBtn">刷新</button>
+          </div>
+        </header>
+
+        <section id="uploadPanel" class="config-drawer hidden">
+          <div class="drawer-head">
+            <h2>数据</h2>
+            <span id="datasetName">未选择</span>
+          </div>
+          <div class="upload-card">
+            <div>
+              <strong>上传数据文件</strong>
+              <span>选择一个或多个 CSV，系统会保存到当前对话，之后可直接提问。</span>
+            </div>
+            <label class="upload-button" for="datasetFiles">选择并上传 CSV</label>
+            <input id="datasetFiles" class="visually-hidden" type="file" accept=".csv" multiple />
+          </div>
+          <div id="selectedFiles" class="selected-files">尚未选择文件</div>
+          <p class="drawer-note">上传阶段只检查 CSV 是否成功保存。用户提问时，Agent 会基于当前对话已上传的数据进行识别、建模或求解。</p>
+          <div id="uploadCheck" class="check-box"></div>
+          <div class="dataset-picker">
+            <div class="side-title">结构化数据集</div>
+            <div id="datasetList" class="list"></div>
+          </div>
+        </section>
+
+        <section id="llmPanel" class="config-drawer hidden">
+          <div class="drawer-head">
+            <h2>模型选择</h2>
+            <span>保存在当前登录用户下，下次自动读取</span>
+          </div>
+          <div class="llm-grid">
+            <select id="providerSelect">
+              <option value="openai">OpenAI</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="custom">自定义</option>
+            </select>
+            <select id="modelSelect"></select>
+            <input id="baseUrlInput" placeholder="Base URL" value="https://api.openai.com/v1" />
+            <input id="apiKeyInput" placeholder="API Key" type="password" />
+            <input id="temperatureInput" placeholder="Temperature" value="0.2" />
+          </div>
+          <button id="saveLlmBtn" class="primary">保存配置</button>
+        </section>
+
+        <section id="mcpPanel" class="config-drawer hidden">
+          <div class="drawer-head">
+            <h2>MCP 配置</h2>
+            <span>可选，用于扩展外部工具</span>
+          </div>
+          <textarea id="mcpInput" rows="4" placeholder='{"tool": {"command": "python", "args": ["server.py"], "transport": "stdio"}}'></textarea>
+        </section>
+
+        <section id="emptyState" class="chat-empty hidden">
+          <div class="empty-orb">OR</div>
+          <h2>先上传 CSV，再开始分析</h2>
+          <p>我会读取你上传的文件内容，并根据你的问题选择解释、建模或求解。</p>
+        </section>
+
+        <section id="chatStream" class="chat-stream">
+          <article class="message assistant-message">
+            <div class="avatar">OA</div>
+          <div class="message-body">
+              <p>你好，上传 CSV 后我会先读取文件内容，再根据你的问题进行建模、分析或求解。</p>
+              <div class="suggestion-row">
+                <button class="suggestion">分析当前供应链数据</button>
+                <button class="suggestion">求解一个背包问题</button>
+                <button class="suggestion">做员工班次指派</button>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section id="answerPanel" class="result-cache hidden" aria-hidden="true">
+          <div id="structuredBox" class="structured"></div>
+          <div id="answerBox" class="answer">等待提问。</div>
+        </section>
+        <section id="modelingPanel" class="result-cache hidden" aria-hidden="true">
+          <div id="problemSpecBox" class="spec-box"></div>
+        </section>
+        <section id="metricGrid" class="metric-grid hidden" aria-hidden="true">
+          <div><span>总成本</span><strong id="objectiveMetric">-</strong></div>
+          <div><span>运输成本</span><strong id="transportMetric">-</strong></div>
+          <div><span>固定成本</span><strong id="fixedMetric">-</strong></div>
+          <div><span>状态</span><strong id="statusMetric">-</strong></div>
+        </section>
+        <section id="recommendPanel" class="result-cache hidden" aria-hidden="true">
+          <h2 id="resultTableTitle">推荐启用仓库</h2>
+          <div id="warehouseTable" class="table-wrap"></div>
+        </section>
+
+        <section id="askPanel" class="composer-wrap">
+          <div class="composer">
+            <textarea id="questionInput" rows="2" placeholder="输入你的优化问题，例如：请分析当前供应链数据，并给出推荐启用仓库和主要风险。"></textarea>
+            <div class="composer-actions">
+              <button data-panel="uploadPanel" class="icon-button">+</button>
+              <button data-panel="llmPanel">模型 <span id="llmState">未配置</span></button>
+              <span id="runStatus" class="run-status">准备就绪</span>
+              <button id="askBtn" class="send-button">↑</button>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script src="/static/app.js?v=20260623-result-focus"></script>
+  </body>
+</html>
