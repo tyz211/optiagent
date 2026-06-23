@@ -397,4 +397,4 @@ node --check web/app.js
 - 智能决策系统原型
 - 供应链优化演示平台
 - LLM + OR Agent 研究型项目
-- 个人简历或作品集展示项目
+- 个人简历或作品集展示项目>>>>>>> origin/main
