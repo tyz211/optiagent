@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from optiagent.data import SupplyChainData
+from optiagent.solver_config import configure_gurobi_model, get_solver_config, quality_status
 
 
 @dataclass(frozen=True)
@@ -19,9 +20,11 @@ class SolveResult:
     message: str
     solver_name: str
     model_type: str
+    mip_gap: float | None = None
+    optimality_proven: bool = False
 
 
-def solve_facility_location(data: SupplyChainData, time_limit: int = 20) -> SolveResult:
+def solve_facility_location(data: SupplyChainData, time_limit: int | None = None) -> SolveResult:
     try:
         import gurobipy as gp
         from gurobipy import GRB
@@ -42,8 +45,10 @@ def solve_facility_location(data: SupplyChainData, time_limit: int = 20) -> Solv
 
     try:
         model = gp.Model("warehouse_facility_location")
-        model.Params.OutputFlag = 0
-        model.Params.TimeLimit = time_limit
+        config = get_solver_config()
+        if time_limit is not None:
+            config = type(config)(**{**config.__dict__, "time_limit": time_limit})
+        configure_gurobi_model(model, config)
 
         open_var = model.addVars(warehouse_names, vtype=GRB.BINARY, name="open")
         ship = model.addVars(warehouse_names, customer_names, lb=0, vtype=GRB.CONTINUOUS, name="ship")
@@ -94,8 +99,17 @@ def solve_facility_location(data: SupplyChainData, time_limit: int = 20) -> Solv
             model_type="MILP",
         )
 
-    status = _gurobi_status_name(model.Status)
-    if model.Status not in (GRB.OPTIMAL, GRB.TIME_LIMIT, GRB.SUBOPTIMAL):
+    status = quality_status(_gurobi_status_name(model.Status), _safe_mip_gap(model))
+    usable_statuses = {
+        GRB.OPTIMAL,
+        GRB.TIME_LIMIT,
+        GRB.SUBOPTIMAL,
+        GRB.NODE_LIMIT,
+        GRB.ITERATION_LIMIT,
+        GRB.SOLUTION_LIMIT,
+        GRB.INTERRUPTED,
+    }
+    if model.Status not in usable_statuses:
         return _empty_result(
             status,
             f"仓库选址 MILP 未得到可用解，状态为 {status}。",
@@ -147,7 +161,12 @@ def solve_facility_location(data: SupplyChainData, time_limit: int = 20) -> Solv
     warehouse_summary = _warehouse_summary(data, allocations, open_decisions)
     customer_summary = _customer_summary(data, allocations)
 
-    message = "Gurobi 已找到最优仓库选址方案。" if model.Status == GRB.OPTIMAL else "Gurobi 已找到可行仓库选址方案。"
+    if status == "OPTIMAL":
+        message = "Gurobi 已找到最优仓库选址方案。"
+    elif status == "NEAR_OPTIMAL":
+        message = f"Gurobi 已找到接近最优的仓库选址方案，当前 MIPGap 约为 {_safe_mip_gap(model):.2%}。"
+    else:
+        message = "Gurobi 已找到可行仓库选址方案。"
     return SolveResult(
         status=status,
         objective_value=float(model.ObjVal),
@@ -159,6 +178,8 @@ def solve_facility_location(data: SupplyChainData, time_limit: int = 20) -> Solv
         message=message,
         solver_name=f"Gurobi {'.'.join(map(str, gp.gurobi.version()))}",
         model_type="MILP",
+        mip_gap=_safe_mip_gap(model),
+        optimality_proven=status == "OPTIMAL",
     )
 
 
@@ -211,6 +232,16 @@ def _empty_result(
         solver_name=solver_name,
         model_type=model_type,
     )
+
+
+def _safe_mip_gap(model) -> float | None:
+    try:
+        gap = float(model.MIPGap)
+    except Exception:
+        return None
+    if pd.isna(gap):
+        return None
+    return gap
 
 
 def _gurobi_status_name(status_code: int) -> str:

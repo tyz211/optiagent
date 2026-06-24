@@ -1372,6 +1372,9 @@ def _structured_answer(
                 "fixed_cost": None,
                 "cost_delta": None,
                 "cost_delta_pct": None,
+                "mip_gap": (generic_result.metrics or {}).get("mip_gap"),
+                "optimality_proven": (generic_result.metrics or {}).get("optimality_proven"),
+                "quality_note": (generic_result.metrics or {}).get("quality_note"),
                 "extra": extra_metrics,
             },
             "recommendations": [
@@ -1405,6 +1408,8 @@ def _structured_answer(
             "fixed_cost": result.fixed_cost,
             "cost_delta": delta,
             "cost_delta_pct": delta_pct,
+            "mip_gap": result.mip_gap,
+            "optimality_proven": result.optimality_proven,
         },
         "recommendations": [
             f"推荐求解器：{problem_spec.recommended_solver}",
@@ -1515,29 +1520,44 @@ def _doc_matches(doc: dict, keywords: list[str]) -> bool:
 
 def _generic_extra_metrics(generic_result) -> list[dict[str, object]]:
     metrics = generic_result.metrics or {}
+    quality = _quality_extra_metrics(generic_result.status, metrics)
     if generic_result.template_id == "knapsack":
         return [
             {"label": "容量使用", "value": metrics.get("used_weight"), "suffix": f"/{metrics.get('capacity')}"},
             {"label": "剩余容量", "value": metrics.get("remaining_capacity")},
             {"label": "选择数量", "value": metrics.get("selected_count")},
+            *quality,
         ]
     if generic_result.template_id == "tsp":
         return [
             {"label": "节点数", "value": metrics.get("node_count")},
             {"label": "路线段数", "value": max(len(metrics.get("route", [])) - 1, 0)},
+            *quality,
         ]
     if generic_result.template_id == "job_shop_scheduling":
         return [
             {"label": "作业数", "value": metrics.get("job_count")},
             {"label": "机器数", "value": metrics.get("machine_count")},
+            *quality,
         ]
     if generic_result.template_id == "production_mix":
         usage = metrics.get("resource_usage", {})
         return [
             {"label": f"{resource} 使用", "value": summary.get("used"), "suffix": f"/{summary.get('capacity')}"}
             for resource, summary in usage.items()
-        ]
-    return []
+        ] + quality
+    return quality
+
+
+def _quality_extra_metrics(status: str, metrics: dict) -> list[dict[str, object]]:
+    items: list[dict[str, object]] = []
+    if metrics.get("optimality_proven") is not None:
+        items.append({"label": "最优性证明", "value": "已证明" if metrics.get("optimality_proven") else "未证明"})
+    if metrics.get("mip_gap") is not None:
+        items.append({"label": "MIP Gap", "value": float(metrics["mip_gap"]), "format": "percent"})
+    if status == "NEAR_OPTIMAL" and not any(item["label"] == "最优性证明" for item in items):
+        items.append({"label": "最优性证明", "value": "接近最优"})
+    return items
 
 
 def _tool_names_for_generic(agent_plan: dict | None = None) -> list[str]:
@@ -1642,6 +1662,8 @@ def _facility_agent_steps(problem_spec, result, changes: list[str]) -> list[dict
 def _facility_optimality_check_text(result) -> str:
     if result.status == "OPTIMAL":
         return "Gurobi 返回 OPTIMAL，当前固定成本与运输成本之和已证明最小。"
+    if result.status == "NEAR_OPTIMAL":
+        return "Gurobi 返回接近最优解，当前 gap 已达到系统设定阈值，可作为大规模问题的高质量方案。"
     if result.status in {"TIME_LIMIT", "SUBOPTIMAL"} and result.objective_value is not None:
         return "已得到可行解，但当前状态未证明全局最优。"
     return result.message or f"求解状态：{result.status}。"
@@ -1650,6 +1672,8 @@ def _facility_optimality_check_text(result) -> str:
 def _optimality_check_text(generic_result) -> str:
     if generic_result.status == "OPTIMAL":
         return "求解器返回 OPTIMAL，已按工具能力证明当前目标值最优。"
+    if generic_result.status == "NEAR_OPTIMAL":
+        return "求解器返回接近最优解，gap 已达到系统设定阈值，适合较大规模数据下使用。"
     if generic_result.template_id == "tsp" and generic_result.metrics.get("optimality_proven") is False:
         return "当前路线由启发式生成，未证明全局最优。"
     if generic_result.status == "FEASIBLE":

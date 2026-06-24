@@ -143,8 +143,8 @@ def _tsp_spec(question: str, data: SupplyChainData | None, confidence: float) ->
         parameters=["distance[i,j]"],
         decision_variables=["route[i,j]：是否从节点 i 前往节点 j"],
         constraints=["每个节点恰好进入一次", "每个节点恰好离开一次", "消除子回路", "路径回到起点"],
-        recommended_solver="Exact enumeration / Nearest-neighbor heuristic",
-        solver_reason="当前实现小规模 TSP 使用固定起点精确枚举；节点较多时使用最近邻启发式生成可行路径。",
+        recommended_solver="Exact DP / Multi-start 2-opt heuristic",
+        solver_reason="小规模 TSP 使用枚举或 Held-Karp 动态规划证明最优；节点较多时使用多起点最近邻和 2-opt 局部搜索生成高质量近似解。",
         data_requirements=[
             DataRequirement("distances", ["from", "to", "distance"], "节点间距离、时间或成本矩阵"),
         ],
@@ -165,8 +165,8 @@ def _job_shop_scheduling_spec(question: str, data: SupplyChainData | None, confi
         parameters=["duration[o]", "machine[o]", "order[o]"],
         decision_variables=["start[o]：工序开始时间", "end[o]：工序结束时间", "interval[o]：工序占用机器区间"],
         constraints=["同一作业内工序按顺序执行", "同一机器同一时间最多加工一道工序", "工序开始和结束时间满足加工时长"],
-        recommended_solver="List scheduling heuristic",
-        solver_reason="当前实现使用稳定的列表调度启发式生成可行排产方案；结果标记为 FEASIBLE，不承诺全局最优。",
+        recommended_solver="OR-Tools CP-SAT / List scheduling fallback",
+        solver_reason="优先使用 CP-SAT 表达机器互斥和工序先后约束并尝试证明最优；OR-Tools 不可用或超时时回退到列表调度可行解。",
         data_requirements=[
             DataRequirement("tasks", ["job", "machine", "duration", "order"], "每道工序所属作业、机器、时长和顺序"),
         ],

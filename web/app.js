@@ -23,7 +23,42 @@ const state = {
   conversationSearch: "",
 };
 
-const fmt = (value) => value === null || value === undefined ? "-" : Number(value).toLocaleString("zh-CN", { maximumFractionDigits: 0 });
+const fmt = (value) => {
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+  if (typeof value === "boolean") {
+    return value ? "是" : "否";
+  }
+  const numeric = Number(value);
+  if (Number.isNaN(numeric)) {
+    return String(value);
+  }
+  return numeric.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+};
+
+const fmtMetric = (item) => {
+  if (item.format === "percent" && item.value !== null && item.value !== undefined) {
+    const numeric = Number(item.value);
+    return Number.isNaN(numeric) ? String(item.value) : `${(numeric * 100).toFixed(2)}%`;
+  }
+  return fmt(item.value);
+};
+
+const formatMetricItem = (item, result) => {
+  if (item.label === "最优性证明") {
+    if (item.value === true) {
+      return "已证明";
+    }
+    if (item.value === false) {
+      return "未证明";
+    }
+    if (String(item.value) === "NaN") {
+      return result?.status === "OPTIMAL" ? "已证明" : "-";
+    }
+  }
+  return fmtMetric(item);
+};
 
 function formatBytes(value) {
   const bytes = Number(value || 0);
@@ -852,8 +887,8 @@ function buildPrimaryMetrics(result) {
   if (result.transport_cost !== null && result.transport_cost !== undefined) {
     items.push({ label: "运输成本", value: fmt(result.transport_cost) });
   }
-  (metrics.extra || []).slice(0, 4).forEach((item, index) => {
-    items.push({ label: item.label, value: fmt(item.value), suffix: item.suffix || "", primary: !items.length && index === 0 });
+  (metrics.extra || []).slice(0, 6).forEach((item, index) => {
+    items.push({ label: item.label, value: formatMetricItem(item, result), suffix: item.suffix || "", primary: !items.length && index === 0 });
   });
   return items;
 }

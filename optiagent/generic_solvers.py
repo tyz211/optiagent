@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 
 from optiagent.problem_spec import ProblemSpec
+from optiagent.solver_config import configure_gurobi_model, get_solver_config, quality_status
 from optiagent.solver_registry import GenericSolverAdapter, register_generic_solver, solve_with_registered_solver
 
 
@@ -38,7 +39,7 @@ def solve_knapsack(
     data: dict[str, Any],
     data_source: str = "用户数据",
     warnings: list[str] | None = None,
-    time_limit: int = 20,
+    time_limit: int | None = None,
 ) -> GenericSolveResult:
     try:
         import gurobipy as gp
@@ -64,8 +65,8 @@ def solve_knapsack(
 
     try:
         model = gp.Model("generic_knapsack")
-        model.Params.OutputFlag = 0
-        model.Params.TimeLimit = time_limit
+        config = _config_with_time_limit(time_limit)
+        configure_gurobi_model(model, config)
         choose = model.addVars(names, vtype=GRB.BINARY, name="choose")
         model.setObjective(gp.quicksum(values[item] * choose[item] for item in names), GRB.MAXIMIZE)
         model.addConstr(gp.quicksum(weights[item] * choose[item] for item in names) <= capacity, name="capacity")
@@ -73,7 +74,7 @@ def solve_knapsack(
     except gp.GurobiError as exc:
         return _generic_error("knapsack", "0-1 背包选择问题", f"Gurobi 求解异常: {exc}", warnings)
 
-    status = _gurobi_status_name(model.Status)
+    status = quality_status(_gurobi_status_name(model.Status), _safe_mip_gap(model))
     if model.SolCount == 0:
         return _generic_error("knapsack", "0-1 背包选择问题", f"未找到可行解，状态为 {status}。", warnings)
 
@@ -109,6 +110,8 @@ def solve_knapsack(
             "remaining_capacity": capacity - selected_weight,
             "selected_value": selected_value,
             "selected_count": len(chosen),
+            "mip_gap": _safe_mip_gap(model),
+            "optimality_proven": status == "OPTIMAL",
         },
         warnings=warnings or [],
         data_source=data_source,
@@ -119,7 +122,7 @@ def solve_assignment(
     data: dict[str, Any],
     data_source: str = "用户数据",
     warnings: list[str] | None = None,
-    time_limit: int = 20,
+    time_limit: int | None = None,
 ) -> GenericSolveResult:
     try:
         import gurobipy as gp
@@ -149,8 +152,8 @@ def solve_assignment(
 
     try:
         model = gp.Model("generic_assignment")
-        model.Params.OutputFlag = 0
-        model.Params.TimeLimit = time_limit
+        config = _config_with_time_limit(time_limit)
+        configure_gurobi_model(model, config)
         assign = model.addVars(resources, tasks, vtype=GRB.BINARY, name="assign")
         model.setObjective(
             gp.quicksum(cost_map[(resource, task)] * assign[resource, task] for resource in resources for task in tasks),
@@ -164,7 +167,7 @@ def solve_assignment(
     except gp.GurobiError as exc:
         return _generic_error("assignment", "指派匹配问题", f"Gurobi 求解异常: {exc}", warnings)
 
-    status = _gurobi_status_name(model.Status)
+    status = quality_status(_gurobi_status_name(model.Status), _safe_mip_gap(model))
     if model.SolCount == 0:
         return _generic_error("assignment", "指派匹配问题", f"未找到可行解，状态为 {status}。", warnings)
 
@@ -193,6 +196,8 @@ def solve_assignment(
             "resource_count": len(resources),
             "task_count": len(tasks),
             "assigned_count": len(decisions),
+            "mip_gap": _safe_mip_gap(model),
+            "optimality_proven": status == "OPTIMAL",
         },
         warnings=warnings or [],
         data_source=data_source,
@@ -203,18 +208,18 @@ def solve_tsp(
     data: dict[str, Any],
     data_source: str = "用户数据",
     warnings: list[str] | None = None,
-    time_limit: int = 20,
+    time_limit: int | None = None,
 ) -> GenericSolveResult:
     matrix, nodes, matrix_warnings = _build_tsp_matrix(data)
     warnings = [*(warnings or []), *matrix_warnings]
     if not matrix or len(matrix) < 2:
         return _generic_error("tsp", "旅行商路径问题", "TSP 数据缺少有效距离矩阵。", warnings, solver_name="OR-Tools")
-    order, solver_name, is_optimal = _solve_tsp_order(matrix)
+    order, solver_name, status, quality_note, mip_gap = _solve_tsp_order(matrix, time_limit=time_limit)
     route = [nodes[idx] for idx in order]
     arcs, total_distance = _route_arcs(route, matrix, nodes)
-    status = "OPTIMAL" if is_optimal else "FEASIBLE"
-    objective_label = "最短总距离" if is_optimal else "启发式路线距离"
-    optimality_note = "已证明全局最优" if is_optimal else "当前为启发式可行解，未证明全局最优"
+    is_optimal = status == "OPTIMAL"
+    objective_label = "最短总距离" if status in {"OPTIMAL", "NEAR_OPTIMAL"} else "启发式路线距离"
+    optimality_note = "已证明全局最优" if is_optimal else quality_note
 
     return GenericSolveResult(
         template_id="tsp",
@@ -225,7 +230,14 @@ def solve_tsp(
         solver_name=solver_name,
         summary=f"建议访问顺序：{' -> '.join(route)}，总距离 {total_distance:,.2f}（{optimality_note}）。",
         decisions=arcs,
-        metrics={"node_count": len(nodes), "total_distance": total_distance, "route": route, "optimality_proven": is_optimal},
+        metrics={
+            "node_count": len(nodes),
+            "total_distance": total_distance,
+            "route": route,
+            "mip_gap": mip_gap,
+            "optimality_proven": is_optimal,
+            "quality_note": quality_note,
+        },
         warnings=warnings,
         data_source=data_source,
     )
@@ -235,7 +247,7 @@ def solve_job_shop_scheduling(
     data: dict[str, Any],
     data_source: str = "用户数据",
     warnings: list[str] | None = None,
-    time_limit: int = 20,
+    time_limit: int | None = None,
 ) -> GenericSolveResult:
     tasks = pd.DataFrame(data.get("tasks", []))
     if tasks.empty or not {"job", "machine", "duration"}.issubset(tasks.columns):
@@ -257,19 +269,18 @@ def solve_job_shop_scheduling(
     tasks = tasks.sort_values(["job", "order"]).reset_index(drop=True)
     horizon = int(tasks["duration"].sum())
 
-    decisions = _list_schedule(tasks)
-    objective = float(max((item["end"] for item in decisions), default=0))
+    decisions, objective, status, solver_name, quality_note = _solve_job_shop_with_exact_or_heuristic(tasks, time_limit=time_limit)
     return GenericSolveResult(
         template_id="job_shop_scheduling",
         display_name="作业车间调度问题",
-        status="FEASIBLE",
+        status=status,
         objective_value=objective,
         objective_label="最大完工时间",
-        solver_name="List Scheduling Heuristic",
-        summary=f"已生成作业车间调度方案，最大完工时间 {objective:,.0f}。",
+        solver_name=solver_name,
+        summary=f"已生成作业车间调度方案，最大完工时间 {objective:,.0f}（{quality_note}）。",
         decisions=sorted(decisions, key=lambda item: (item["machine"], item["start"], item["job"])),
-        metrics={"makespan": objective, "job_count": tasks["job"].nunique(), "machine_count": tasks["machine"].nunique()},
-        warnings=[*(warnings or []), "当前环境使用启发式调度器；如 OR-Tools CP-SAT 可用，可升级为证明最优的精确求解。"],
+        metrics={"makespan": objective, "job_count": tasks["job"].nunique(), "machine_count": tasks["machine"].nunique(), "optimality_proven": status == "OPTIMAL"},
+        warnings=[*(warnings or []), *([] if status == "OPTIMAL" else [quality_note])],
         data_source=data_source,
     )
 
@@ -278,7 +289,7 @@ def solve_production_mix(
     data: dict[str, Any],
     data_source: str = "用户数据",
     warnings: list[str] | None = None,
-    time_limit: int = 20,
+    time_limit: int | None = None,
 ) -> GenericSolveResult:
     try:
         import gurobipy as gp
@@ -304,8 +315,8 @@ def solve_production_mix(
 
     try:
         model = gp.Model("production_mix")
-        model.Params.OutputFlag = 0
-        model.Params.TimeLimit = time_limit
+        config = _config_with_time_limit(time_limit)
+        configure_gurobi_model(model, config)
         vtype = GRB.INTEGER if bool(data.get("integer", False)) else GRB.CONTINUOUS
         quantity = model.addVars(products["product"].tolist(), lb=0, vtype=vtype, name="quantity")
         for row in products.itertuples(index=False):
@@ -329,7 +340,7 @@ def solve_production_mix(
     except gp.GurobiError as exc:
         return _generic_error("production_mix", "产品组合与生产计划问题", f"Gurobi 求解异常: {exc}", warnings)
 
-    status = _gurobi_status_name(model.Status)
+    status = quality_status(_gurobi_status_name(model.Status), _safe_mip_gap(model))
     if model.SolCount == 0:
         return _generic_error("production_mix", "产品组合与生产计划问题", f"未找到可行解，状态为 {status}。", warnings)
 
@@ -358,7 +369,7 @@ def solve_production_mix(
         solver_name=f"Gurobi {'.'.join(map(str, gp.gurobi.version()))}",
         summary=f"最优生产计划利润 {objective:,.2f}。",
         decisions=decisions,
-        metrics={"resource_usage": resource_summary, "integer": bool(data.get("integer", False))},
+        metrics={"resource_usage": resource_summary, "integer": bool(data.get("integer", False)), "mip_gap": _safe_mip_gap(model), "optimality_proven": status == "OPTIMAL"},
         warnings=warnings or [],
         data_source=data_source,
     )
@@ -437,7 +448,7 @@ def _build_tsp_matrix(data: dict[str, Any]) -> tuple[list[list[float]], list[str
     return matrix, nodes, warnings
 
 
-def _solve_tsp_order(matrix: list[list[float]]) -> tuple[list[int], str, bool]:
+def _solve_tsp_order(matrix: list[list[float]], time_limit: int | None = None) -> tuple[list[int], str, str, str, float | None]:
     node_count = len(matrix)
     if node_count <= 9:
         best_order: list[int] | None = None
@@ -448,21 +459,140 @@ def _solve_tsp_order(matrix: list[list[float]]) -> tuple[list[int], str, bool]:
             if distance < best_distance:
                 best_distance = distance
                 best_order = list(order)
-        return best_order or [0, 0], "Exact TSP Enumeration", True
+        return best_order or [0, 0], "Exact TSP Enumeration", "OPTIMAL", "已证明全局最优", 0.0
 
-    if node_count <= 20:
-        return _solve_tsp_held_karp(matrix), "Held-Karp Dynamic Programming", True
+    if node_count <= get_solver_config().tsp_exact_limit:
+        return _solve_tsp_held_karp(matrix), "Held-Karp Dynamic Programming", "OPTIMAL", "已证明全局最优", 0.0
 
-    unvisited = set(range(1, node_count))
+    if node_count <= get_solver_config().tsp_milp_limit:
+        milp_result = _solve_tsp_with_gurobi(matrix, time_limit=time_limit)
+        if milp_result is not None:
+            return milp_result
+
+    order = _multi_start_nearest_neighbor_2opt(matrix)
+    return order, "Multi-start Nearest Neighbor + 2-opt", "FEASIBLE", "已使用多起点构造和 2-opt 局部搜索生成高质量近似解，未证明全局最优", None
+
+
+def _solve_tsp_with_gurobi(matrix: list[list[float]], time_limit: int | None = None) -> tuple[list[int], str, str, str, float | None] | None:
+    try:
+        import gurobipy as gp
+        from gurobipy import GRB
+    except Exception:
+        return None
+
+    node_count = len(matrix)
+    try:
+        model = gp.Model("tsp_mtz")
+        configure_gurobi_model(model, _config_with_time_limit(time_limit))
+        arcs = [(i, j) for i in range(node_count) for j in range(node_count) if i != j]
+        x = model.addVars(arcs, vtype=GRB.BINARY, name="x")
+        u = model.addVars(range(1, node_count), lb=1, ub=node_count - 1, vtype=GRB.CONTINUOUS, name="u")
+
+        model.setObjective(gp.quicksum(float(matrix[i][j]) * x[i, j] for i, j in arcs), GRB.MINIMIZE)
+        for i in range(node_count):
+            model.addConstr(gp.quicksum(x[i, j] for j in range(node_count) if j != i) == 1, name=f"out_{i}")
+            model.addConstr(gp.quicksum(x[j, i] for j in range(node_count) if j != i) == 1, name=f"in_{i}")
+        for i in range(1, node_count):
+            for j in range(1, node_count):
+                if i == j:
+                    continue
+                model.addConstr(u[i] - u[j] + node_count * x[i, j] <= node_count - 1, name=f"mtz_{i}_{j}")
+        model.optimize()
+    except gp.GurobiError:
+        return None
+
+    if model.SolCount == 0:
+        return None
+
+    successor: dict[int, int] = {}
+    for i, j in arcs:
+        if x[i, j].X > 0.5:
+            successor[i] = j
     order = [0]
     current = 0
+    seen = {0}
+    while len(order) < node_count + 1:
+        nxt = successor.get(current)
+        if nxt is None:
+            return None
+        order.append(nxt)
+        if nxt == 0:
+            break
+        if nxt in seen:
+            return None
+        seen.add(nxt)
+        current = nxt
+    if order[-1] != 0 or len(order) != node_count + 1:
+        return None
+
+    status = quality_status(_gurobi_status_name(model.Status), _safe_mip_gap(model))
+    gap = _safe_mip_gap(model)
+    if status == "OPTIMAL":
+        note = "Gurobi MILP 已证明全局最优"
+    elif status == "NEAR_OPTIMAL":
+        note = f"Gurobi MILP 已找到接近最优路线，当前 MIPGap 约为 {gap:.2%}"
+    else:
+        status = "FEASIBLE"
+        note = "Gurobi MILP 已找到可行路线，但未证明全局最优"
+    return order, "Gurobi TSP MILP", status, note, gap
+
+
+def _multi_start_nearest_neighbor_2opt(matrix: list[list[float]]) -> list[int]:
+    node_count = len(matrix)
+    starts = list(range(min(node_count, get_solver_config().tsp_local_search_limit)))
+    best_order: list[int] | None = None
+    best_distance = float("inf")
+    for start in starts:
+        order = _nearest_neighbor_from_start(matrix, start)
+        order = _two_opt(order, matrix)
+        distance = _order_distance(order, matrix)
+        if distance < best_distance:
+            best_distance = distance
+            best_order = order
+    if best_order is None:
+        return [0, 0]
+    cycle = best_order[:-1]
+    zero_idx = cycle.index(0)
+    rotated = cycle[zero_idx:] + cycle[:zero_idx]
+    return [*rotated, 0]
+
+
+def _nearest_neighbor_from_start(matrix: list[list[float]], start: int) -> list[int]:
+    node_count = len(matrix)
+    unvisited = set(range(node_count))
+    unvisited.remove(start)
+    order = [start]
+    current = start
     while unvisited:
         nxt = min(unvisited, key=lambda node: matrix[current][node])
         order.append(nxt)
         unvisited.remove(nxt)
         current = nxt
-    order.append(0)
-    return order, "Nearest Neighbor TSP Heuristic", False
+    order.append(start)
+    return order
+
+
+def _two_opt(order: list[int], matrix: list[list[float]]) -> list[int]:
+    improved = True
+    best = order[:]
+    while improved:
+        improved = False
+        for i in range(1, len(best) - 2):
+            for j in range(i + 1, len(best) - 1):
+                if j - i == 1:
+                    continue
+                old = matrix[best[i - 1]][best[i]] + matrix[best[j]][best[j + 1]]
+                new = matrix[best[i - 1]][best[j]] + matrix[best[i]][best[j + 1]]
+                if new + 1e-9 < old:
+                    best[i:j + 1] = reversed(best[i:j + 1])
+                    improved = True
+        if len(best) > 800:
+            break
+    return best
+
+
+def _order_distance(order: list[int], matrix: list[list[float]]) -> float:
+    return sum(matrix[order[idx]][order[idx + 1]] for idx in range(len(order) - 1))
 
 
 def _solve_tsp_held_karp(matrix: list[list[float]]) -> list[int]:
@@ -546,6 +676,84 @@ def _list_schedule(tasks: pd.DataFrame) -> list[dict[str, Any]]:
     return decisions
 
 
+def _solve_job_shop_with_exact_or_heuristic(tasks: pd.DataFrame, time_limit: int | None = None) -> tuple[list[dict[str, Any]], float, str, str, str]:
+    milp_result = _solve_job_shop_with_gurobi(tasks, time_limit=time_limit)
+    if milp_result is not None:
+        return milp_result
+
+    decisions = _list_schedule(tasks)
+    objective = float(max((item["end"] for item in decisions), default=0))
+    return decisions, objective, "FEASIBLE", "List Scheduling Heuristic", "精确 MILP 求解器不可用，已使用列表调度启发式生成可行解，未证明全局最优"
+
+
+def _solve_job_shop_with_gurobi(tasks: pd.DataFrame, time_limit: int | None = None) -> tuple[list[dict[str, Any]], float, str, str, str] | None:
+    try:
+        import gurobipy as gp
+        from gurobipy import GRB
+    except Exception:
+        return None
+
+    horizon = int(tasks["duration"].sum())
+    if len(tasks) > get_solver_config().job_shop_milp_limit:
+        return None
+    try:
+        model = gp.Model("job_shop_milp")
+        configure_gurobi_model(model, _config_with_time_limit(time_limit))
+        task_ids = tasks.index.tolist()
+        start = model.addVars(task_ids, lb=0, ub=horizon, vtype=GRB.CONTINUOUS, name="start")
+        end = model.addVars(task_ids, lb=0, ub=horizon, vtype=GRB.CONTINUOUS, name="end")
+        makespan = model.addVar(lb=0, ub=horizon, vtype=GRB.CONTINUOUS, name="makespan")
+
+        for idx, row in tasks.iterrows():
+            model.addConstr(end[idx] == start[idx] + int(row["duration"]), name=f"duration_{idx}")
+            model.addConstr(makespan >= end[idx], name=f"makespan_{idx}")
+
+        for _job, group in tasks.groupby("job"):
+            ordered = group.sort_values("order")
+            previous_idx = None
+            for idx in ordered.index:
+                if previous_idx is not None:
+                    model.addConstr(start[idx] >= end[previous_idx], name=f"precedence_{previous_idx}_{idx}")
+                previous_idx = idx
+
+        for _machine, group in tasks.groupby("machine"):
+            ids = group.index.tolist()
+            for pos, first in enumerate(ids):
+                for second in ids[pos + 1:]:
+                    before = model.addVar(vtype=GRB.BINARY, name=f"before_{first}_{second}")
+                    model.addConstr(start[second] >= end[first] - horizon * (1 - before), name=f"no_overlap_a_{first}_{second}")
+                    model.addConstr(start[first] >= end[second] - horizon * before, name=f"no_overlap_b_{first}_{second}")
+
+        model.setObjective(makespan, GRB.MINIMIZE)
+        model.optimize()
+    except gp.GurobiError:
+        return None
+
+    if model.SolCount == 0:
+        return None
+
+    decisions = []
+    for idx, row in tasks.iterrows():
+        decisions.append(
+            {
+                "job": str(row["job"]),
+                "machine": str(row["machine"]),
+                "order": int(row["order"]),
+                "duration": int(row["duration"]),
+                "start": float(start[idx].X),
+                "end": float(end[idx].X),
+            }
+        )
+    status = quality_status(_gurobi_status_name(model.Status), _safe_mip_gap(model))
+    if status == "OPTIMAL":
+        note = "Gurobi MILP 已证明全局最优"
+    elif status == "NEAR_OPTIMAL":
+        note = f"Gurobi MILP 已找到接近最优解，当前 MIPGap 约为 {_safe_mip_gap(model):.2%}"
+    else:
+        note = "Gurobi MILP 已找到可行解，但未证明全局最优"
+    return decisions, float(makespan.X), status, "Gurobi MILP", note
+
+
 def _extract_json_payload(text: str) -> dict[str, Any] | None:
     candidates = re.findall(r"```json\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
     candidates.extend(re.findall(r"(\{.*\})", text, flags=re.DOTALL))
@@ -578,6 +786,23 @@ def _generic_error(
     )
 
 
+def _config_with_time_limit(time_limit: int | None):
+    config = get_solver_config()
+    if time_limit is None:
+        return config
+    return type(config)(**{**config.__dict__, "time_limit": time_limit})
+
+
+def _safe_mip_gap(model) -> float | None:
+    try:
+        gap = float(model.MIPGap)
+    except Exception:
+        return None
+    if pd.isna(gap):
+        return None
+    return gap
+
+
 def _display_item_name(item: str) -> str:
     text = str(item)
     return f"物品 {text}" if text.isdigit() else text
@@ -592,6 +817,9 @@ def _gurobi_status_name(status_code: int) -> str:
         5: "UNBOUNDED",
         8: "NODE_LIMIT",
         9: "TIME_LIMIT",
+        10: "SOLUTION_LIMIT",
+        11: "INTERRUPTED",
+        12: "NUMERIC",
         13: "SUBOPTIMAL",
     }
     return statuses.get(status_code, f"UNKNOWN_{status_code}")
