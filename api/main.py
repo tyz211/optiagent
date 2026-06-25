@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from io import StringIO
+import json
+import math
 from pathlib import Path
+import time
 
 import pandas as pd
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -348,6 +353,148 @@ def ask(request: AskRequest, x_session_token: str | None = Header(default=None))
         user_id=uid,
         conversation_id=conversation["id"],
     )
+
+
+@app.post("/api/ask/stream")
+def ask_stream(request: AskRequest, x_session_token: str | None = Header(default=None)):
+    user = get_user_by_token(x_session_token)
+    uid = user["id"] if user else None
+    conversation = ensure_conversation(
+        request.conversation_id,
+        user_id=uid,
+        title=_conversation_title_from_question(request.question),
+    )
+
+    def event_stream():
+        try:
+            yield _sse("status", {"message": "正在识别问题类型与可用数据..."})
+            yield _sse("status", {"message": "正在选择 RAG、工具与求解器..."})
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    handle_ask,
+                    question=request.question,
+                    requested_dataset_id=request.dataset_id,
+                    mcp_config=request.mcp_config,
+                    user_id=uid,
+                    conversation_id=conversation["id"],
+                )
+                waiting_messages = [
+                    "正在解析上传数据与约束...",
+                    "正在执行工具调用或优化求解...",
+                    "求解仍在进行，正在等待结果...",
+                ]
+                wait_index = 0
+                while True:
+                    try:
+                        result = future.result(timeout=1.2)
+                        break
+                    except TimeoutError:
+                        yield _sse("status", {"message": waiting_messages[wait_index % len(waiting_messages)]})
+                        wait_index += 1
+            result["conversation_id"] = result.get("conversation_id") or conversation["id"]
+            yield _sse("status", {"message": "正在生成结构化回答..."})
+            for chunk in _stream_answer_text(result):
+                yield _sse("answer_delta", {"text": chunk})
+                time.sleep(0.015)
+            yield _sse("final", result)
+        except HTTPException as exc:
+            yield _sse("error", {"message": str(exc.detail)})
+        except Exception as exc:
+            yield _sse("error", {"message": f"流式回答失败：{type(exc).__name__}: {exc}"})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _sse(event: str, payload: dict) -> str:
+    data = json.dumps(_json_safe(jsonable_encoder(payload)), ensure_ascii=False, allow_nan=False)
+    return f"event: {event}\ndata: {data}\n\n"
+
+
+def _json_safe(value):
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return None
+    return value
+
+
+def _stream_answer_text(result: dict) -> list[str]:
+    structured = result.get("structured_answer") or {}
+    lines: list[str] = []
+    conclusion = structured.get("conclusion") or result.get("answer")
+    if conclusion:
+        lines.append(str(conclusion))
+
+    metrics = structured.get("metrics") or {}
+    metric_lines = []
+    objective = result.get("objective_value")
+    objective_label = metrics.get("objective_label") or (result.get("generic_result") or {}).get("objective_label") or "目标值"
+    if objective is not None:
+        metric_lines.append(f"{objective_label}：{_format_stream_value(objective)}")
+    if result.get("fixed_cost") is not None:
+        metric_lines.append(f"固定成本：{_format_stream_value(result.get('fixed_cost'))}")
+    if result.get("transport_cost") is not None:
+        metric_lines.append(f"运输成本：{_format_stream_value(result.get('transport_cost'))}")
+    for item in (metrics.get("extra") or [])[:4]:
+        label = item.get("label")
+        value = item.get("value")
+        if label and value is not None:
+            metric_lines.append(f"{label}：{_format_stream_metric(item)}")
+    if metric_lines:
+        lines.append("\n".join(metric_lines))
+
+    recommendations = [str(item) for item in structured.get("recommendations") or [] if item]
+    if recommendations:
+        lines.append("建议：\n" + "\n".join(f"- {item}" for item in recommendations[:5]))
+    risks = [str(item) for item in structured.get("risks") or [] if item]
+    if risks:
+        lines.append("风险：\n" + "\n".join(f"- {item}" for item in risks[:3]))
+
+    text = "\n\n".join(lines).strip() or str(result.get("answer") or "已完成。")
+    return _chunk_text(text)
+
+
+def _chunk_text(text: str, size: int = 24) -> list[str]:
+    chunks = []
+    current = ""
+    for char in text:
+        current += char
+        if len(current) >= size or char in "\n。；.!?":
+            chunks.append(current)
+            current = ""
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _format_stream_metric(item: dict) -> str:
+    value = item.get("value")
+    if item.get("format") == "percent":
+        try:
+            return f"{float(value) * 100:.2f}%"
+        except (TypeError, ValueError):
+            return str(value)
+    suffix = item.get("suffix") or ""
+    return f"{_format_stream_value(value)}{suffix}"
+
+
+def _format_stream_value(value) -> str:
+    if isinstance(value, bool):
+        return "是" if value else "否"
+    if isinstance(value, (int, float)):
+        return f"{value:,.2f}".rstrip("0").rstrip(".")
+    return str(value)
 
 
 @app.get("/api/runs")

@@ -588,31 +588,109 @@ async function ask() {
   if (!question) {
     return;
   }
-  setText("runStatus", "运行中...");
+  setText("runStatus", "连接中...");
   appendUserMessage(question);
+  const streamingMessage = appendStreamingAssistantMessage();
   input.value = "";
   try {
-    const result = await api("/api/ask", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        question,
-        dataset_id: state.activeDatasetId,
-        conversation_id: state.activeConversationId,
-        mcp_config: byId("mcpInput")?.value || "",
-      }),
+    const result = await streamAsk({
+      question,
+      dataset_id: state.activeDatasetId,
+      conversation_id: state.activeConversationId,
+      mcp_config: byId("mcpInput")?.value || "",
+    }, {
+      onStatus(message) {
+        setText("runStatus", message || "运行中...");
+        streamingMessage.setStatus(message || "运行中...");
+      },
+      onDelta(text) {
+        streamingMessage.append(text);
+      },
     });
     if (result.conversation_id) {
       setActiveConversation(result.conversation_id);
     }
+    streamingMessage.remove();
     renderResult(result);
     setText("runStatus", "完成");
     loadAll().catch((err) => console.error(err));
   } catch (err) {
     setText("runStatus", "失败");
     setText("answerBox", err.message);
-    appendErrorMessage(err.message);
+    streamingMessage.fail(err.message);
   }
+}
+
+async function streamAsk(payload, handlers = {}) {
+  const headers = {
+    "Content-Type": "application/json",
+    ...(state.token ? { "X-Session-Token": state.token } : {}),
+  };
+  const res = await fetch("/api/ask/stream", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok || !res.body) {
+    const text = await res.text();
+    throw new Error(text || res.statusText);
+  }
+
+  const decoder = new TextDecoder();
+  const reader = res.body.getReader();
+  let buffer = "";
+  let finalResult = null;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() || "";
+    for (const part of parts) {
+      if (!part.trim()) {
+        continue;
+      }
+      const event = parseSseEvent(part);
+      if (event.type === "status") {
+        handlers.onStatus?.(event.data.message);
+      } else if (event.type === "answer_delta") {
+        handlers.onDelta?.(event.data.text || "");
+      } else if (event.type === "final") {
+        finalResult = event.data;
+      } else if (event.type === "error") {
+        throw new Error(event.data.message || "流式回答失败");
+      }
+    }
+  }
+  if (buffer.trim()) {
+    const event = parseSseEvent(buffer);
+    if (event.type === "final") {
+      finalResult = event.data;
+    } else if (event.type === "error") {
+      throw new Error(event.data.message || "流式回答失败");
+    }
+  }
+  if (!finalResult) {
+    throw new Error("流式回答未返回最终结果。");
+  }
+  return finalResult;
+}
+
+function parseSseEvent(raw) {
+  const lines = raw.split("\n");
+  const typeLine = lines.find((line) => line.startsWith("event:"));
+  const dataLines = lines.filter((line) => line.startsWith("data:"));
+  const type = typeLine ? typeLine.slice(6).trim() : "message";
+  const dataText = dataLines.map((line) => line.slice(5).trimStart()).join("\n");
+  let data = {};
+  try {
+    data = dataText ? JSON.parse(dataText) : {};
+  } catch (err) {
+    data = { message: dataText || String(err) };
+  }
+  return { type, data };
 }
 
 async function uploadDataset() {
@@ -777,6 +855,61 @@ function appendUserMessage(text) {
   `;
   stream.appendChild(article);
   scrollChatToBottom();
+}
+
+function appendStreamingAssistantMessage() {
+  const stream = byId("chatStream");
+  if (!stream) {
+    return {
+      append() {},
+      setStatus() {},
+      fail(message) {
+        appendErrorMessage(message);
+      },
+      remove() {},
+    };
+  }
+  const article = document.createElement("article");
+  article.className = "message assistant-message streaming-message";
+  article.innerHTML = `
+    <div class="avatar">OA</div>
+    <div class="message-body">
+      <div class="result-card">
+        <div class="card-title"><span>正在生成回答</span><span class="stream-status">连接中...</span></div>
+        <div class="answer streaming-answer"></div>
+      </div>
+    </div>
+  `;
+  stream.appendChild(article);
+  const answer = article.querySelector(".streaming-answer");
+  const status = article.querySelector(".stream-status");
+  return {
+    append(text) {
+      if (!answer || !text) {
+        return;
+      }
+      answer.textContent += text;
+      scrollChatToBottom();
+    },
+    setStatus(message) {
+      if (status) {
+        status.textContent = message || "运行中...";
+      }
+    },
+    fail(message) {
+      if (status) {
+        status.textContent = "失败";
+      }
+      if (answer) {
+        answer.textContent = message || "回答失败。";
+      }
+      article.classList.add("streaming-error");
+      scrollChatToBottom();
+    },
+    remove() {
+      article.remove();
+    },
+  };
 }
 
 function appendAssistantMessage(result) {

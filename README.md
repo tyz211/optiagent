@@ -77,6 +77,7 @@
 ### 5. 结果展示
 
 - 结构化结论
+- 流式回答输出
 - 指标卡片
 - 决策表
 - 风险提示
@@ -104,6 +105,12 @@
 - 作业车间调度优先使用 Gurobi MILP 证明最优或接近最优；规模过大或精确求解器不可用时回退到列表调度启发式，并标记为 `FEASIBLE`。
 - 结果页会优先展示目标值、关键成本、MIP Gap 和最优性证明状态；Agent 工具调用过程作为可展开审计信息。
 - 可通过环境变量调整默认策略：`OPTIAGENT_TIME_LIMIT`、`OPTIAGENT_MIP_GAP`、`OPTIAGENT_SOLVER_THREADS`、`OPTIAGENT_TSP_EXACT_LIMIT`、`OPTIAGENT_TSP_MILP_LIMIT`、`OPTIAGENT_TSP_LOCAL_SEARCH_LIMIT`、`OPTIAGENT_JOB_SHOP_MILP_LIMIT`。
+
+### 流式输出
+
+- 前端默认调用 `/api/ask/stream`，通过 `fetch + ReadableStream` 接收 SSE 事件。
+- 后端会依次推送 `status`、`answer_delta` 和 `final`：用户先看到阶段状态和逐段回答，最终再渲染完整结构化卡片、决策表和 Agent 轨迹。
+- `/api/ask` 保留为非流式兼容接口。
 
 ## 系统如何工作
 

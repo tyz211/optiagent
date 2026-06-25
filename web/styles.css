@@ -743,6 +743,25 @@ textarea:focus {
   line-height: 1.7;
 }
 
+.streaming-message .result-card {
+  border-color: #cbd5e1;
+}
+
+.streaming-message .stream-status {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.streaming-answer {
+  min-height: 76px;
+  color: #111827;
+}
+
+.streaming-error .result-card {
+  border-color: #fecaca;
+}
+
 .structured .conclusion {
   margin-bottom: 12px;
   font-weight: 720;

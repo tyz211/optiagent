@@ -17,3 +17,5 @@ data/optiagent.sqlite3
 
 dist/
 build/
+
+docs/
