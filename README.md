@@ -2,6 +2,8 @@
 
 > 一个面向运筹优化场景的本地 Agent 系统：支持自然语言提问、CSV/JSON 数据输入、RAG 建模知识检索、工具调用与优化求解。
 
+> A local-first optimization agent for operations research workflows, combining natural language understanding, structured modeling, RAG, solver execution, and explainable results.
+
 ![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white)
 ![Gurobi](https://img.shields.io/badge/Gurobi-Optimizer-E87722)
@@ -14,6 +16,9 @@
 
 ## 目录
 
+- [Why This Repo](#why-this-repo)
+- [Who Is This For](#who-is-this-for)
+- [典型使用场景](#典型使用场景)
 - [项目的优势](#项目的优势)
 - [效果图](#效果图)
 - [架构图](#架构图)
@@ -23,8 +28,31 @@
 - [CSV 处理策略](#csv-处理策略)
 - [工具体系](#工具体系)
 - [快速开始](#快速开始)
+- [Examples](#examples)
+- [Roadmap](#roadmap)
+- [Community](#community)
 - [项目结构](#项目结构)
 - [数据示例](#数据示例)
+
+## Why This Repo
+
+- It shows how an OR agent can go beyond chat and reach actual solver execution.
+- It combines natural language input, CSV/JSON ingestion, local RAG, tool routing, and optimization solvers in one repo.
+- It is useful both as a demo system and as a starting point for people building optimization agents, solver copilots, or domain-specific decision assistants.
+
+## Who Is This For
+
+- 想做“运筹优化 Agent / OR Copilot / 求解助手”的开发者
+- 需要把 LLM、RAG、结构化数据和 MILP/启发式求解串起来的研究者
+- 想把自然语言前端接到优化后端的课程项目、毕业设计或原型项目作者
+- 希望了解“从前端上传数据到后端建模求解”完整链路的同学
+
+## 典型使用场景
+
+- 用自然语言描述仓库选址、生产计划、作业车间调度、指派、背包、TSP 等问题
+- 上传业务 CSV，让系统自动识别数据角色、完成字段标准化并调用求解器
+- 借助本地 RAG 为建模、字段要求、求解策略提供解释依据
+- 将该仓库作为运筹 Agent 的最小可行原型，继续扩展新模板、新工具、新求解器
 
 ## 项目的优势
 
@@ -192,6 +220,31 @@ uvicorn api.main:app --reload --host 127.0.0.1 --port 8000
 ```text
 http://127.0.0.1:8000
 ```
+
+## Examples
+
+可直接体验的示例放在 [examples/README.md](/Users/tianyuanzhe/运筹优化/examples/README.md)：
+
+- 仓库选址：使用 `data/facility_location_*.csv`
+- 指派问题：使用 [examples/assignment_sample.json](/Users/tianyuanzhe/运筹优化/examples/assignment_sample.json)
+- 作业车间调度：使用 [examples/job_shop_scheduling_sample.json](/Users/tianyuanzhe/运筹优化/examples/job_shop_scheduling_sample.json)
+- 产品组合：使用 [examples/production_mix_sample.json](/Users/tianyuanzhe/运筹优化/examples/production_mix_sample.json)
+
+如果你是第一次了解这个项目，建议先从 `facility_location` 或 `assignment` 开始，最容易看到完整的上传、建模、求解与结果展示链路。
+
+## Roadmap
+
+- 扩展更多活跃可执行模板：VRP、VRPTW、网络流、排班、鲁棒优化
+- 提升模糊问题下的 LLM 规划与追问能力
+- 增强多文件联合解析、自动 schema 对齐与数据纠错
+- 引入更多可插拔求解器与更细粒度的 solver routing
+- 完善 benchmark、案例集与评测脚本，支持更稳定的 Agent 能力验证
+
+## Community
+
+- 仓库变更记录见 [CHANGELOG.md](/Users/tianyuanzhe/运筹优化/CHANGELOG.md)
+- 贡献方式见 [CONTRIBUTING.md](/Users/tianyuanzhe/运筹优化/CONTRIBUTING.md)
+- 如果你也在做 OR Agent、Optimization Copilot、Decision Intelligence 或 Solver + LLM 结合的方向，欢迎基于这个仓库继续扩展
 
 ## 运行依赖
 

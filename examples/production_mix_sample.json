@@ -1,0 +1,12 @@
+{
+  "products": [
+    {"product": "标准款", "profit": 26, "labor": 2, "material": 3, "machine": 1},
+    {"product": "高端款", "profit": 38, "labor": 3, "material": 4, "machine": 2},
+    {"product": "经济款", "profit": 18, "labor": 1, "material": 2, "machine": 1}
+  ],
+  "capacities": {
+    "labor": 120,
+    "material": 150,
+    "machine": 70
+  }
+}

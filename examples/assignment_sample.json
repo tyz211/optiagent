@@ -1,0 +1,15 @@
+{
+  "resources": ["员工A", "员工B", "员工C"],
+  "tasks": ["拣货", "装箱", "复核"],
+  "costs": [
+    {"resource": "员工A", "task": "拣货", "cost": 4},
+    {"resource": "员工A", "task": "装箱", "cost": 7},
+    {"resource": "员工A", "task": "复核", "cost": 6},
+    {"resource": "员工B", "task": "拣货", "cost": 5},
+    {"resource": "员工B", "task": "装箱", "cost": 3},
+    {"resource": "员工B", "task": "复核", "cost": 8},
+    {"resource": "员工C", "task": "拣货", "cost": 6},
+    {"resource": "员工C", "task": "装箱", "cost": 5},
+    {"resource": "员工C", "task": "复核", "cost": 4}
+  ]
+}
