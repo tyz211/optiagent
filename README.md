@@ -232,13 +232,6 @@ http://127.0.0.1:8000
 
 如果你是第一次了解这个项目，建议先从 `facility_location` 或 `assignment` 开始，最容易看到完整的上传、建模、求解与结果展示链路。
 
-## Roadmap
-
-- 扩展更多活跃可执行模板：VRP、VRPTW、网络流、排班、鲁棒优化
-- 提升模糊问题下的 LLM 规划与追问能力
-- 增强多文件联合解析、自动 schema 对齐与数据纠错
-- 引入更多可插拔求解器与更细粒度的 solver routing
-- 完善 benchmark、案例集与评测脚本，支持更稳定的 Agent 能力验证
 
 ## Community
 
