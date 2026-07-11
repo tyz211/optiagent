@@ -15,8 +15,6 @@
 该项目尝试把 **自然语言理解、结构化建模、RAG、工具路由、求解器执行、结果解释** 串成一条完整闭环，让用户可以像和分析助手对话一样提出优化问题，并得到可审计、可解释、可执行的求解结果。
 
 ## 目录
-
-- [Why This Repo](#why-this-repo)
 - [Who Is This For](#who-is-this-for)
 - [典型使用场景](#典型使用场景)
 - [项目的优势](#项目的优势)
@@ -33,12 +31,6 @@
 - [Community](#community)
 - [项目结构](#项目结构)
 - [数据示例](#数据示例)
-
-## Why This Repo
-
-- It shows how an OR agent can go beyond chat and reach actual solver execution.
-- It combines natural language input, CSV/JSON ingestion, local RAG, tool routing, and optimization solvers in one repo.
-- It is useful both as a demo system and as a starting point for people building optimization agents, solver copilots, or domain-specific decision assistants.
 
 ## Who Is This For
 
