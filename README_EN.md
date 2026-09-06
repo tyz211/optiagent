@@ -42,6 +42,7 @@ Architecture:
 - Local markdown-based RAG over optimization knowledge
 - CSV upload, schema inference, normalization, and validation
 - Structured execution for optimization templates
+- Built-in Document, Data, and Solver MCP servers with versioned problem/result contracts
 - Streaming answer output through `/api/ask/stream`
 - Session-isolated file handling and SQLite persistence
 
@@ -63,8 +64,8 @@ User question / uploaded data
   -> LLM router or local rule router
   -> ProblemSpec generation
   -> RAG retrieval
-  -> Data parsing and validation
-  -> Solver execution
+  -> MCP Client
+     -> Document MCP / Data MCP / Solver MCP
   -> Optimality / feasibility checks
   -> Structured answer rendering
 ```
@@ -75,6 +76,7 @@ User question / uploaded data
 - [examples/README.md](/Users/tianyuanzhe/运筹优化/examples/README.md): quick-start examples for visitors
 - [CHANGELOG.md](/Users/tianyuanzhe/运筹优化/CHANGELOG.md): notable project changes
 - [CONTRIBUTING.md](/Users/tianyuanzhe/运筹优化/CONTRIBUTING.md): contribution guidance
+- [docs/mcp-architecture.md](docs/mcp-architecture.md): MCP contracts, tools, configuration, and security boundaries
 
 ## Quick Start
 

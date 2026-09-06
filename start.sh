@@ -39,6 +39,24 @@ then
   exit 1
 fi
 
+MISSING_DOCUMENT_DEPS="$($PYTHON_BIN - <<'PY'
+from importlib.util import find_spec
+
+# 这些依赖只影响 Document/Data MCP 的 PDF、Word 和 Excel 读取。
+modules = {
+    "openpyxl": "openpyxl",
+    "xlrd": "xlrd",
+    "pypdf": "pypdf",
+    "docx": "python-docx",
+}
+print(" ".join(package for module, package in modules.items() if find_spec(module) is None))
+PY
+)"
+
+if [[ -n "$MISSING_DOCUMENT_DEPS" ]]; then
+  echo "提示：Document/Data MCP 的部分文档格式尚不可用，可安装：$MISSING_DOCUMENT_DEPS"
+fi
+
 PORT="$("$PYTHON_BIN" - "$HOST" "$PORT" <<'PY'
 import socket
 import sys

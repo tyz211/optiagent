@@ -40,6 +40,7 @@ from api.database import (
 from api.services.ask_service import handle_ask
 from optiagent.data import SupplyChainData, normalize_data, validate_data
 from optiagent.llm import DataProfile, LLMConfig
+from optiagent.mcp_client import builtin_mcp_config
 from optiagent.schema_mapping import assemble_facility_data, apply_table_mapping, infer_facility_table, mapping_summary
 
 
@@ -101,6 +102,34 @@ def index_head():
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/mcp")
+def mcp_manifest():
+    """返回内置 MCP 的发现信息，不启动额外子进程。"""
+
+    config = builtin_mcp_config()
+    return {
+        "default_enabled": True,
+        "transport": "stdio",
+        "servers": {
+            name: {
+                "module": connection["args"][-1],
+                "cwd": connection["cwd"],
+            }
+            for name, connection in config.items()
+        },
+        "configuration": {
+            "description": "MCP 配置留空时自动启用内置 document/data/solver 服务。",
+            "merge_shape": {"include_builtin": True, "servers": {}},
+        },
+        "gateway": {
+            "contract": "ProblemEnvelope v1.0 -> ValidationReport -> SolveEnvelope v1.0",
+            "local_transport": "in_process",
+            "remote_transport": ["stdio", "streamable_http"],
+            "all_solver_paths_unified": True,
+        },
+    }
 
 
 @app.post("/api/login")

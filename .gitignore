@@ -18,4 +18,5 @@ data/optiagent.sqlite3
 dist/
 build/
 
-docs/
+docs/*
+!docs/mcp-architecture.md

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 import json
 from typing import Any
@@ -11,12 +10,12 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 
 from optiagent.data import SupplyChainData
-from optiagent.generic_solvers import solve_by_problem_spec
 from optiagent.llm import LLMConfig
+from optiagent.mcp_client import load_mcp_tools_sync
+from optiagent.optimization_gateway import solve_facility_via_gateway, solve_question_via_gateway
 from optiagent.problem_spec import infer_problem_spec, spec_summary
 from optiagent.rag import rag_context_pack, rag_summary
 from optiagent.scenario import apply_what_if, explain_result
-from optiagent.solver import solve_facility_location
 from optiagent.web_research import web_search
 
 
@@ -35,16 +34,18 @@ def run_configured_multi_agent(
     mcp_config_json: str = "",
 ) -> AgentRunResult:
     tools = build_builtin_tools(data)
-    mcp_tools, mcp_status = _load_mcp_tools_sync(mcp_config_json)
-    tools.extend(mcp_tools)
 
     if not config or not config.enabled:
         return AgentRunResult(
             answer=_local_router_answer(query, data),
             tool_names=[item.name for item in tools],
-            mcp_status=mcp_status,
+            mcp_status="LLM 未启用，本次未触发 MCP 工具路由。",
             raw=None,
         )
+
+    mcp_result = load_mcp_tools_sync(mcp_config_json)
+    tools.extend(mcp_result.tools)
+    mcp_status = mcp_result.status
 
     llm = ChatOpenAI(
         model=config.model,
@@ -56,9 +57,13 @@ def run_configured_multi_agent(
         "你是通用运筹优化多智能体系统的 Supervisor。回答必须使用中文，"
         "先给业务结论，再简要说明调用了哪些工具和依据来源。\n"
         "核心流程：面对任何优化问题，优先调用 problem_spec_tool 生成 ProblemSpec；"
+        "文档读取和建模知识优先使用 document MCP，数据画像与标准化优先使用 data MCP，"
+        "已有完整 ProblemEnvelope 时优先使用 solver MCP；MCP 不可用时才回退到同名内置能力。"
         "涉及建模方法、数据字段、代码模板或求解器选择时调用 rag_context_pack_tool；"
-        "ProblemSpec 为 knapsack、assignment、tsp、job_shop_scheduling 或 production_mix 时调用 generic_optimizer_tool；"
-        "仓库选址、启用仓库、成本、需求变化或关闭仓库等结构化供应链问题调用 gurobi_facility_location_tool。\n"
+        "ProblemSpec 为 knapsack、assignment、tsp、job_shop_scheduling 或 production_mix 时，"
+        "generic_optimizer_tool 会通过 MCP Gateway 生成合同、校验并求解；"
+        "仓库选址、启用仓库、成本、需求变化或关闭仓库等结构化供应链问题，"
+        "gurobi_facility_location_tool 也必须经过同一 MCP Gateway。\n"
         "真实数据规则：当用户要求真实、当前、公开网页、市场、城市、物流、仓储、地理位置等外部事实，"
         "或仓库/门店/设施选址缺少事实支撑时，必须调用 web_search_tool；涉及中国城市人口、GDP、经纬度时可同时调用 city_reference_tool。"
         "web_search_tool 只提供来源证据，不能替代优化数据表。\n"
@@ -106,9 +111,9 @@ def build_builtin_tools(data: SupplyChainData):
 
     @tool
     def generic_optimizer_tool(question: str) -> str:
-        """对已支持的通用优化模板进行实际求解，当前支持背包、指派、TSP、作业车间调度和产品组合/MILP。"""
+        """通过 MCP Gateway 对背包、指派、TSP、作业车间调度和产品组合执行合同化求解。"""
         spec = infer_problem_spec(question, data)
-        result = solve_by_problem_spec(question, spec)
+        result = solve_question_via_gateway(question, spec)
         if result is None:
             return json.dumps(
                 {
@@ -178,10 +183,15 @@ def build_builtin_tools(data: SupplyChainData):
 
     @tool
     def gurobi_facility_location_tool(question: str) -> str:
-        """根据中文 what-if 问题修改场景，并调用 Gurobi 求解仓库选址 MILP。"""
-        baseline = solve_facility_location(data)
+        """根据中文 what-if 修改场景，再通过 MCP Gateway 校验并求解仓库选址 MILP。"""
+        baseline = solve_facility_via_gateway(data, data_source="Agent 基线数据", question=question)
         scenario = apply_what_if(question, data)
-        result = solve_facility_location(scenario.data)
+        result = solve_facility_via_gateway(
+            scenario.data,
+            data_source="Agent 场景数据",
+            question=question,
+            warnings=scenario.warnings,
+        )
         open_warehouses = []
         warehouse_summary = []
         if not result.warehouse_summary.empty:
@@ -236,7 +246,7 @@ def build_builtin_tools(data: SupplyChainData):
 def _local_router_answer(query: str, data: SupplyChainData) -> str:
     notes, docs = rag_summary(query, top_k=3)
     spec = infer_problem_spec(query, data)
-    generic_result = solve_by_problem_spec(query, spec)
+    generic_result = solve_question_via_gateway(query, spec)
     if generic_result:
         return "\n".join(
             [
@@ -248,9 +258,14 @@ def _local_router_answer(query: str, data: SupplyChainData) -> str:
                 "命中文档：" + "、".join(doc.title for doc in docs),
             ]
         )
-    baseline = solve_facility_location(data)
+    baseline = solve_facility_via_gateway(data, data_source="本地路由基线数据", question=query)
     scenario = apply_what_if(query, data)
-    result = solve_facility_location(scenario.data)
+    result = solve_facility_via_gateway(
+        scenario.data,
+        data_source="本地路由场景数据",
+        question=query,
+        warnings=scenario.warnings,
+    )
     explanation = explain_result(baseline, result, scenario.changes)
     open_warehouses = []
     if not result.warehouse_summary.empty:
@@ -270,27 +285,6 @@ def _local_router_answer(query: str, data: SupplyChainData) -> str:
             "命中文档：" + "、".join(doc.title for doc in docs),
         ]
     )
-
-
-def _load_mcp_tools_sync(mcp_config_json: str):
-    if not mcp_config_json.strip():
-        return [], "未配置 MCP，使用内置工具。"
-    try:
-        config = json.loads(mcp_config_json)
-    except json.JSONDecodeError as exc:
-        return [], f"MCP JSON 解析失败：{exc}"
-
-    try:
-        return asyncio.run(_load_mcp_tools(config)), "MCP 工具加载成功。"
-    except Exception as exc:
-        return [], f"MCP 工具加载失败：{exc}"
-
-
-async def _load_mcp_tools(config: dict[str, Any]):
-    from langchain_mcp_adapters.client import MultiServerMCPClient
-
-    client = MultiServerMCPClient(config)
-    return await client.get_tools()
 
 
 def _extract_answer(raw: Any) -> str:

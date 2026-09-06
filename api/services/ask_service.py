@@ -16,17 +16,15 @@ from api.database import (
     save_run,
     touch_conversation,
 )
-from optiagent.generic_solvers import (
-    solve_assignment,
-    solve_by_problem_spec,
-    solve_job_shop_scheduling,
-    solve_knapsack,
-    solve_production_mix,
-    solve_tsp,
-)
 from optiagent.langchain_agents import run_configured_multi_agent
 from optiagent.data import SupplyChainData, normalize_data, validate_data
 from optiagent.llm import LLMConfig
+from optiagent.optimization_gateway import (
+    IN_PROCESS_MCP_STATUS,
+    solve_facility_via_gateway,
+    solve_generic_via_gateway,
+    solve_question_via_gateway,
+)
 from optiagent.problem_spec import infer_problem_spec, spec_summary
 from optiagent.rag import load_knowledge_base, rag_context_pack, rag_summary
 from optiagent.scenario import apply_what_if, explain_result
@@ -37,7 +35,6 @@ from optiagent.schema_mapping import (
     infer_facility_table,
     mapping_summary,
 )
-from optiagent.solver import solve_facility_location
 from optiagent.web_research import web_search
 
 
@@ -180,7 +177,7 @@ def _build_uploaded_generic_response(question: str, uploaded_generic, agent_plan
         "rag_docs": [doc.title for doc in docs],
         "tool_names": _tool_names_for_generic(agent_plan),
         "agent_steps": _generic_agent_steps(uploaded_generic, agent_plan, plan_warning),
-        "mcp_status": "未使用 MCP。",
+        "mcp_status": IN_PROCESS_MCP_STATUS,
         "warehouse_summary": [],
         "allocations": [],
     }
@@ -196,13 +193,35 @@ def _answer_from_structured_dataset(
     problem_spec = infer_problem_spec(question, data)
     rag_pack = rag_context_pack(question)
     rag_notes, docs = rag_summary(question)
-    generic_result = solve_by_problem_spec(question, problem_spec)
+    generic_result = solve_question_via_gateway(question, problem_spec)
 
-    baseline = solve_facility_location(data)
+    baseline = solve_facility_via_gateway(data, data_source=f"数据集 {dataset_id} 基线", question=question)
     scenario = apply_what_if(question, data)
-    result = solve_facility_location(scenario.data) if generic_result is None else baseline
-    agent_result = run_configured_multi_agent(question, data, llm_config, mcp_config)
-    display_answer = generic_result.summary if generic_result else agent_result.answer
+    result = (
+        solve_facility_via_gateway(
+            scenario.data,
+            data_source=f"数据集 {dataset_id} 场景",
+            question=question,
+            warnings=scenario.warnings,
+        )
+        if generic_result is None
+        else baseline
+    )
+    if llm_config and llm_config.enabled:
+        agent_result = run_configured_multi_agent(question, data, llm_config, mcp_config)
+        display_answer = generic_result.summary if generic_result else agent_result.answer
+        tool_names = agent_result.tool_names
+        mcp_status = f"{IN_PROCESS_MCP_STATUS} {agent_result.mcp_status}"
+    else:
+        # 本地路径已经完成统一求解，不再启动 Agent 造成重复求解。
+        agent_result = None
+        display_answer = generic_result.summary if generic_result else _facility_answer_text(result)
+        tool_names = (
+            _tool_names_for_generic(None)
+            if generic_result
+            else ["local_problem_router", "problem_spec_tool", "mcp_gateway", "data_validate_problem", "solver_solve_problem"]
+        )
+        mcp_status = IN_PROCESS_MCP_STATUS
 
     open_warehouses = []
     warehouse_summary = []
@@ -231,13 +250,13 @@ def _answer_from_structured_dataset(
         "baseline_objective": baseline.objective_value,
         "open_warehouses": open_warehouses,
         "scenario_changes": scenario.changes,
-        "warnings": scenario.warnings,
+        "warnings": generic_result.warnings if generic_result else scenario.warnings,
         "explanation": explain_result(baseline, result, scenario.changes),
         "rag_notes": rag_notes,
         "rag_docs": [doc.title for doc in docs],
-        "tool_names": agent_result.tool_names,
+        "tool_names": tool_names,
         "agent_steps": _structured_agent_steps(agent_result, problem_spec, generic_result),
-        "mcp_status": agent_result.mcp_status,
+        "mcp_status": mcp_status,
         "warehouse_summary": warehouse_summary,
         "allocations": allocations,
     }
@@ -253,9 +272,14 @@ def _answer_from_facility_data(
     problem_spec = infer_problem_spec(question, data)
     rag_pack = rag_context_pack(question)
     rag_notes, docs = rag_summary(question)
-    baseline = solve_facility_location(data)
+    baseline = solve_facility_via_gateway(data, data_source="当前对话基线数据", question=question)
     scenario = apply_what_if(question, data)
-    result = solve_facility_location(scenario.data)
+    result = solve_facility_via_gateway(
+        scenario.data,
+        data_source="当前对话场景数据",
+        question=question,
+        warnings=scenario.warnings,
+    )
     display_answer = _facility_answer_text(result)
     open_warehouses = []
     warehouse_summary = []
@@ -290,9 +314,16 @@ def _answer_from_facility_data(
         "explanation": explain_result(baseline, result, scenario.changes),
         "rag_notes": rag_notes,
         "rag_docs": [doc.title for doc in docs],
-        "tool_names": ["local_problem_router", "problem_spec_tool", "rag_context_pack_tool", "data_parser", "gurobi_facility_location_tool"],
+        "tool_names": [
+            "local_problem_router",
+            "problem_spec_tool",
+            "rag_context_pack_tool",
+            "mcp_gateway",
+            "data_validate_problem",
+            "solver_solve_problem",
+        ],
         "agent_steps": _facility_agent_steps(problem_spec, result, scenario.changes),
-        "mcp_status": "未使用 MCP。",
+        "mcp_status": IN_PROCESS_MCP_STATUS,
         "warehouse_summary": warehouse_summary,
         "allocations": allocations,
     }
@@ -608,9 +639,9 @@ def _llm_agent_plan(question: str, files: list[dict], llm_config: LLMConfig | No
             "problem_spec_tool",
             "rag_context_pack_tool",
             "web_search_tool",
-            "data_parser",
-            "generic_optimizer_tool",
-            "gurobi_facility_location_tool",
+            "mcp_gateway",
+            "data_validate_problem",
+            "solver_solve_problem",
             "uploaded_file_context",
         ],
     }
@@ -630,7 +661,8 @@ def _llm_agent_plan(question: str, files: list[dict], llm_config: LLMConfig | No
                         "如果用户已经上传 warehouses/customers/costs 或其他可执行模板数据，不要因为仓库选址关键词调用 web_search_tool，应优先调用求解工具。"
                         "web_search_tool 只能提供来源证据，不能自动生成候选仓库、客户、需求、容量、成本或距离矩阵。"
                         "如缺少可求解参数，应选择 file_answer 或 needs_solver=false，并说明缺口。"
-                        "当用户要求求解优化问题时，tool_chain 必须包含 generic_optimizer_tool 或 gurobi_facility_location_tool。"
+                        "当用户要求求解优化问题时，tool_chain 必须依次包含 "
+                        "mcp_gateway、data_validate_problem 和 solver_solve_problem。"
                         "工具计划必须要求求解器返回可证明最优解；如果工具只能给启发式可行解，必须在结果中标记未证明最优。"
                         "只输出 JSON，不要输出 Markdown。"
                         "JSON 字段：template_id, confidence, objective, selected_file, tool_chain, reasoning, needs_solver, data_gaps。"
@@ -688,9 +720,23 @@ def _safe_float(value, default: float = 0.0) -> float:
 
 def _default_tool_chain(template_id: str) -> list[str]:
     if template_id in EXECUTABLE_TEMPLATE_IDS:
-        return ["problem_spec_tool", "rag_context_pack_tool", "data_parser", "generic_optimizer_tool", "result_formatter"]
+        return [
+            "problem_spec_tool",
+            "rag_context_pack_tool",
+            "mcp_gateway",
+            "data_validate_problem",
+            "solver_solve_problem",
+            "result_formatter",
+        ]
     if template_id == "facility_location":
-        return ["problem_spec_tool", "rag_context_pack_tool", "data_parser", "gurobi_facility_location_tool", "result_formatter"]
+        return [
+            "problem_spec_tool",
+            "rag_context_pack_tool",
+            "mcp_gateway",
+            "data_validate_problem",
+            "solver_solve_problem",
+            "result_formatter",
+        ]
     return ["uploaded_file_context"]
 
 
@@ -908,7 +954,12 @@ def _solve_uploaded_generic(question: str, files: list[dict], preferred_template
             if {"item", "value", "weight"}.issubset(columns):
                 capacity = _extract_capacity(question) or float(normalized["weight"].sum())
                 data = {"capacity": capacity, "items": normalized.to_dict(orient="records")}
-                return solve_knapsack(data, data_source=f"上传文件：{filename}", warnings=[])
+                return solve_generic_via_gateway(
+                    "knapsack",
+                    data,
+                    data_source=f"上传文件：{filename}",
+                    question=question,
+                )
     if _should_try_template(preferred_template, lowered, "assignment", ["指派", "匹配", "assignment"], roles):
         for frame, filename in frames:
             normalized = _normalize_generic_frame(frame)
@@ -919,29 +970,55 @@ def _solve_uploaded_generic(question: str, files: list[dict], preferred_template
                     "tasks": sorted(normalized["task"].astype(str).unique().tolist()),
                     "costs": normalized.to_dict(orient="records"),
                 }
-                return solve_assignment(data, data_source=f"上传文件：{filename}", warnings=[])
+                return solve_generic_via_gateway(
+                    "assignment",
+                    data,
+                    data_source=f"上传文件：{filename}",
+                    question=question,
+                )
     if _should_try_template(preferred_template, lowered, "tsp", ["旅行商", "tsp", "巡回", "最短路径"], roles):
         for frame, filename in frames:
             normalized = _normalize_generic_frame(frame)
             columns = {str(column).strip().lower() for column in normalized.columns}
             if {"from", "to", "distance"}.issubset(columns):
                 data = {"distances": normalized.to_dict(orient="records")}
-                return solve_tsp(data, data_source=f"上传文件：{filename}", warnings=[])
+                return solve_generic_via_gateway(
+                    "tsp",
+                    data,
+                    data_source=f"上传文件：{filename}",
+                    question=question,
+                )
             coordinate_data = _coordinates_to_tsp_data(normalized)
             if coordinate_data:
-                return solve_tsp(coordinate_data, data_source=f"上传文件：{filename}", warnings=["上传文件为坐标表，已按欧氏距离构造 TSP 距离矩阵。"])
+                return solve_generic_via_gateway(
+                    "tsp",
+                    coordinate_data,
+                    data_source=f"上传文件：{filename}",
+                    question=question,
+                    warnings=["上传文件为坐标表，已按欧氏距离构造 TSP 距离矩阵。"],
+                )
     if _should_try_template(preferred_template, lowered, "job_shop_scheduling", ["调度", "排产", "工序", "job", "schedule"], roles):
         for frame, filename in frames:
             normalized = _normalize_generic_frame(frame)
             columns = {str(column).strip().lower() for column in normalized.columns}
             if {"job", "machine", "duration"}.issubset(columns):
                 data = {"tasks": normalized.to_dict(orient="records")}
-                return solve_job_shop_scheduling(data, data_source=f"上传文件：{filename}", warnings=[])
+                return solve_generic_via_gateway(
+                    "job_shop_scheduling",
+                    data,
+                    data_source=f"上传文件：{filename}",
+                    question=question,
+                )
     if _should_try_template(preferred_template, lowered, "production_mix", ["产品组合", "生产计划", "利润", "资源约束", "milp"], roles):
         production = _extract_production_mix_from_files(frames, question)
         if production:
             data, filename = production
-            return solve_production_mix(data, data_source=f"上传文件：{filename}", warnings=[])
+            return solve_generic_via_gateway(
+                "production_mix",
+                data,
+                data_source=f"上传文件：{filename}",
+                question=question,
+            )
     return None
 
 
@@ -1161,8 +1238,8 @@ def _coordinates_to_tsp_data(frame: pd.DataFrame) -> dict | None:
 
 def _solve_json_generic(question: str, preferred_template: str | None = None):
     problem_spec = _problem_spec_for_template(question, preferred_template) if preferred_template in EXECUTABLE_TEMPLATE_IDS else infer_problem_spec(question, None)
-    result = solve_by_problem_spec(question, problem_spec)
-    if result and result.status != "ERROR":
+    result = solve_question_via_gateway(question, problem_spec)
+    if result and result.status not in {"ERROR", "INVALID_DATA", "SOLVER_ERROR"}:
         return result
     return None
 
@@ -1378,7 +1455,7 @@ def _structured_answer(
                 "extra": extra_metrics,
             },
             "recommendations": [
-                "工具调用链：llm_problem_router -> problem_spec_tool -> rag_context_pack_tool -> data_parser -> generic_optimizer_tool",
+                "工具调用链：problem_spec_tool -> mcp_gateway -> data_validate_problem -> solver_solve_problem",
                 f"推荐求解器：{problem_spec.recommended_solver}",
                 f"数据来源：{generic_result.data_source}",
                 generic_result.summary,
@@ -1568,8 +1645,9 @@ def _tool_names_for_generic(agent_plan: dict | None = None) -> list[str]:
         "local_problem_router",
         "problem_spec_tool",
         "rag_context_pack_tool",
-        "data_parser",
-        "generic_optimizer_tool",
+        "mcp_gateway",
+        "data_validate_problem",
+        "solver_solve_problem",
     ]
 
 
@@ -1594,8 +1672,9 @@ def _generic_agent_steps(generic_result, agent_plan: dict | None = None, plan_wa
     steps.extend([
         {"step": "识别问题", "tool": "problem_spec_tool", "output": f"{generic_result.display_name}"},
         {"step": "检索知识", "tool": "rag_context_pack_tool", "output": "读取建模模板、数据 Schema 与求解策略"},
-        {"step": "解析数据", "tool": "data_parser", "output": generic_result.data_source},
-        {"step": "执行求解", "tool": "generic_optimizer_tool", "output": f"{generic_result.solver_name} / {generic_result.status}"},
+        {"step": "构建合同", "tool": "mcp_gateway", "output": f"ProblemEnvelope v1.0 / {generic_result.data_source}"},
+        {"step": "校验数据", "tool": "data_validate_problem", "output": "统一 Schema 与可行性前置校验"},
+        {"step": "执行求解", "tool": "solver_solve_problem", "output": f"{generic_result.solver_name} / {generic_result.status}"},
         {"step": "最优性校验", "tool": "optimality_checker", "output": _optimality_check_text(generic_result)},
         {"step": "结构化结果", "tool": "result_formatter", "output": generic_result.summary},
     ])
@@ -1608,8 +1687,9 @@ def _structured_agent_steps(agent_result, problem_spec, generic_result) -> list[
     return [
         {"step": "识别问题", "tool": "problem_spec_tool", "output": f"{problem_spec.display_name} / {problem_spec.problem_type}"},
         {"step": "检索知识", "tool": "rag_context_pack_tool", "output": "读取建模模板、数据 Schema 与求解策略"},
-        {"step": "解析数据", "tool": "data_profile_tool", "output": "读取当前结构化供应链数据集"},
-        {"step": "执行求解", "tool": "gurobi_facility_location_tool", "output": "调用仓库选址 MILP 求解器"},
+        {"step": "构建合同", "tool": "mcp_gateway", "output": "生成 ProblemEnvelope v1.0"},
+        {"step": "校验数据", "tool": "data_validate_problem", "output": "校验仓库、客户、成本表与总体容量"},
+        {"step": "执行求解", "tool": "solver_solve_problem", "output": "通过 SolveEnvelope 调用仓库选址 MILP 求解器"},
         {"step": "结构化结果", "tool": "result_formatter", "output": "生成成本、启用仓库、风险与依据"},
     ]
 
@@ -1633,8 +1713,8 @@ def _facility_agent_steps(problem_spec, result, changes: list[str]) -> list[dict
         },
         {
             "step": "解析数据",
-            "tool": "data_parser",
-            "output": "组装当前对话上传的 warehouses、customers、costs 三类 CSV 数据。",
+            "tool": "mcp_gateway",
+            "output": "组装当前对话数据并生成 ProblemEnvelope v1.0。",
         },
         {
             "step": "应用业务约束",
@@ -1643,7 +1723,7 @@ def _facility_agent_steps(problem_spec, result, changes: list[str]) -> list[dict
         },
         {
             "step": "执行求解",
-            "tool": "gurobi_facility_location_tool",
+            "tool": "solver_solve_problem",
             "output": f"{result.solver_name} / {result.status}",
         },
         {

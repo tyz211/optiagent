@@ -63,6 +63,8 @@
 
 ![通用运筹优化 Agent 技术架构图](assets/architecture.png)
 
+MCP 层已拆分为 Document / Data / Solver 三个可独立运行的服务，通过版本化的 `ProblemEnvelope` 与 `SolveEnvelope` 交换结构化数据。详细设计、工具清单和运行方式见 [MCP 架构文档](docs/mcp-architecture.md)。
+
 ## 当前能力
 
 ### 1. 问题理解与建模
@@ -86,7 +88,8 @@
 - 根据问题模板自动调用对应求解工具
 - 对求解结果做最优性/可行性标记
 - 对真实数据类问题支持 Web Research 证据检索
-- 支持 MCP 外部工具接入
+- 内置 Document MCP、Data MCP 和 Solver MCP，并支持外部 MCP 服务接入
+- MCP 服务部分故障时可按服务降级，不会因单个连接失败丢失全部工具
 
 ### 4. 数据与对话管理
 
@@ -179,6 +182,8 @@
 
 这些工具主要定义在 [optiagent/langchain_agents.py](optiagent/langchain_agents.py) 中，负责连接自然语言理解、知识检索、数据分析与求解执行。
 
+内置 MCP 另外暴露 10 个可发现工具，覆盖文档读取、知识检索、数据画像、问题数据构建、数据校验、求解器能力发现和统一求解。
+
 ## 快速开始
 
 推荐使用启动脚本：
@@ -238,7 +243,8 @@ http://127.0.0.1:8000
 - pandas / numpy
 - gurobipy
 - requests
-- langchain / langchain-openai / langchain-mcp-adapters
+- langchain / langchain-openai / langchain-mcp-adapters / MCP Python SDK
+- openpyxl / xlrd / pypdf / python-docx（Document/Data MCP 文件解析）
 - SQLite
 
 如果本机没有有效 Gurobi license，相关模板会返回不可用状态
@@ -252,6 +258,11 @@ api/
   services/ask_service.py  提问编排、RAG、数据解析、工具调用响应
 
 optiagent/
+  mcp_contracts.py         ProblemEnvelope / SolveEnvelope 版本化合同
+  mcp_validation.py        Data / Solver MCP 共享的确定性数据校验
+  mcp_client.py            内置与外部 MCP 发现、前缀和降级
+  optimization_gateway.py  本地与 MCP 共用的唯一合同化求解入口
+  mcp_servers/             Document / Data / Solver MCP 服务
   problem_spec.py          ProblemSpec 数据结构
   templates/registry.py    问题模板与自动识别
   solver_registry.py       通用求解器注册表
@@ -390,23 +401,26 @@ Beijing,Nanjing,4.2
 - API Key
 - Temperature
 
-MCP 配置示例：
+MCP 配置留空时，启用 LLM 的 Agent 会使用当前 Python 环境自动发现内置 Document / Data / Solver MCP。合并外部服务的配置示例：
 
 ```json
 {
-  "math": {
-    "command": "python",
-    "args": ["server.py"],
-    "transport": "stdio"
+  "include_builtin": true,
+  "servers": {
+    "external_data": {
+      "transport": "streamable_http",
+      "url": "https://example.com/mcp"
+    }
   }
 }
 ```
 
-未配置 LLM 时，系统仍可运行本地 ProblemSpec、RAG、数据解析和求解器调用链路。
+旧版 MultiServerMCPClient 裸 JSON 配置仍可使用，并会与内置服务合并。未配置 LLM 时，系统仍可运行本地 ProblemSpec、RAG、数据解析和求解器调用链路，但不会触发 LLM 的 MCP 工具路由。
 
 ## 验证命令
 
 ```bash
+python3 -m unittest discover -s tests
 python3 -m compileall api optiagent
 node --check web/app.js
 ```
