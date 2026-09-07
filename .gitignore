@@ -20,3 +20,5 @@ build/
 
 docs/*
 !docs/mcp-architecture.md
+!docs/agent-workflow.md
+!docs/research-direction.md

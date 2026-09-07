@@ -1,6 +1,6 @@
 # OptiAgent
 
-> A local-first optimization agent for operations research workflows, combining natural language understanding, structured modeling, RAG, solver execution, and explainable results.
+> An agentic operations-research system for learning how to model, route tools, solve, verify, and recover.
 
 ![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white)
@@ -10,7 +10,7 @@
 ![SQLite](https://img.shields.io/badge/SQLite-Local%20Storage-003B57?logo=sqlite&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-OptiAgent is a practical prototype for building optimization-focused agents. It connects natural language input, structured problem specification, local RAG, data parsing, solver execution, and explainable result rendering into one end-to-end workflow.
+OptiAgent is evolving into a research platform around **Learning an Agent Policy for Automated Optimization Modeling and Solving**. It treats optimization assistance as a sequential decision problem spanning clarification, retrieval, modeling, tool routing, solving, verification, and repair.
 
 ## Why This Repo
 
@@ -43,7 +43,8 @@ Architecture:
 - CSV upload, schema inference, normalization, and validation
 - Structured execution for optimization templates
 - Built-in Document, Data, and Solver MCP servers with versioned problem/result contracts
-- Streaming answer output through `/api/ask/stream`
+- A LangGraph workflow with Planner, Data Agent, Modeler, Solver, Verifier, and Explainer nodes
+- Live `agent_step` events and streaming answer output through `/api/ask/stream`
 - Session-isolated file handling and SQLite persistence
 
 ## Supported Executable Templates
@@ -61,13 +62,11 @@ Architecture:
 
 ```text
 User question / uploaded data
-  -> LLM router or local rule router
-  -> ProblemSpec generation
-  -> RAG retrieval
-  -> MCP Client
-     -> Document MCP / Data MCP / Solver MCP
-  -> Optimality / feasibility checks
-  -> Structured answer rendering
+  -> LangGraph Agent Policy
+     -> Planner -> Data Agent -> Modeler
+     -> Solver -> MCP Gateway -> Document / Data / Solver MCP
+     -> Verifier -> Explainer
+  -> Persisted trajectory and structured result
 ```
 
 ## Repository Highlights
@@ -77,6 +76,8 @@ User question / uploaded data
 - [CHANGELOG.md](/Users/tianyuanzhe/运筹优化/CHANGELOG.md): notable project changes
 - [CONTRIBUTING.md](/Users/tianyuanzhe/运筹优化/CONTRIBUTING.md): contribution guidance
 - [docs/mcp-architecture.md](docs/mcp-architecture.md): MCP contracts, tools, configuration, and security boundaries
+- [docs/agent-workflow.md](docs/agent-workflow.md): observable LangGraph execution and SSE event contract
+- [docs/research-direction.md](docs/research-direction.md): research question, policy formulation, reward design, and experimental roadmap
 
 ## Quick Start
 
@@ -119,11 +120,11 @@ http://127.0.0.1:8000
 
 ## Roadmap
 
-- Add more active templates such as VRP, VRPTW, network flow, staff scheduling, and robust optimization
-- Improve LLM planning and clarification for ambiguous user questions
-- Strengthen multi-file schema alignment and data correction
-- Support more pluggable solvers and finer-grained solver routing
-- Add benchmarks, curated cases, and evaluation scripts
+- Build an optimization-agent trajectory dataset from observable graph runs
+- Add deterministic solution verification and verifiable reward signals
+- Compare rule, LLM-planner, behavior-cloning, and offline-RL policies
+- Learn tool routing, failure recovery, and budget-aware solver portfolio selection
+- Extend the benchmark to VRP/VRPTW, network flow, staff scheduling, and robust optimization
 
 ## Community
 

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from concurrent.futures import ThreadPoolExecutor
 from io import StringIO
 import json
 import math
 from pathlib import Path
+from queue import Empty, Queue
 import time
 
 import pandas as pd
@@ -37,7 +38,7 @@ from api.database import (
     save_uploaded_files,
     set_active_dataset,
 )
-from api.services.ask_service import handle_ask
+from api.services.agent_workflow import agent_graph_manifest, run_agent_workflow
 from optiagent.data import SupplyChainData, normalize_data, validate_data
 from optiagent.llm import DataProfile, LLMConfig
 from optiagent.mcp_client import builtin_mcp_config
@@ -130,6 +131,13 @@ def mcp_manifest():
             "all_solver_paths_unified": True,
         },
     }
+
+
+@app.get("/api/agent/graph")
+def agent_graph():
+    """返回前端和调试工具使用的 Agent 状态图定义。"""
+
+    return agent_graph_manifest()
 
 
 @app.post("/api/login")
@@ -375,7 +383,7 @@ def ask(request: AskRequest, x_session_token: str | None = Header(default=None))
         user_id=uid,
         title=_conversation_title_from_question(request.question),
     )
-    return handle_ask(
+    return run_agent_workflow(
         question=request.question,
         requested_dataset_id=request.dataset_id,
         mcp_config=request.mcp_config,
@@ -396,30 +404,30 @@ def ask_stream(request: AskRequest, x_session_token: str | None = Header(default
 
     def event_stream():
         try:
-            yield _sse("status", {"message": "正在识别问题类型与可用数据..."})
-            yield _sse("status", {"message": "正在选择 RAG、工具与求解器..."})
+            yield _sse("status", {"message": "Agent 状态图已启动..."})
+            event_queue: Queue[dict] = Queue()
             with ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(
-                    handle_ask,
+                    run_agent_workflow,
                     question=request.question,
                     requested_dataset_id=request.dataset_id,
                     mcp_config=request.mcp_config,
                     user_id=uid,
                     conversation_id=conversation["id"],
+                    event_callback=event_queue.put,
                 )
-                waiting_messages = [
-                    "正在解析上传数据与约束...",
-                    "正在执行工具调用或优化求解...",
-                    "求解仍在进行，正在等待结果...",
-                ]
-                wait_index = 0
-                while True:
+                last_heartbeat = time.monotonic()
+                while not future.done() or not event_queue.empty():
                     try:
-                        result = future.result(timeout=1.2)
-                        break
-                    except TimeoutError:
-                        yield _sse("status", {"message": waiting_messages[wait_index % len(waiting_messages)]})
-                        wait_index += 1
+                        event = event_queue.get(timeout=0.25)
+                        yield _sse("agent_step", event)
+                        if event.get("status") == "running":
+                            yield _sse("status", {"message": f"{event.get('label')}：{event.get('detail')}"})
+                    except Empty:
+                        if time.monotonic() - last_heartbeat >= 1.2:
+                            yield _sse("status", {"message": "Agent 正在执行当前节点..."})
+                            last_heartbeat = time.monotonic()
+                result = future.result()
             result["conversation_id"] = result.get("conversation_id") or conversation["id"]
             yield _sse("status", {"message": "正在生成结构化回答..."})
             for chunk in _stream_answer_text(result):

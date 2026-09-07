@@ -4,7 +4,8 @@
 
 ```mermaid
 flowchart TD
-    A[Optimization Agent] --> L[LLM<br/>Planning / Modeling / Tool Routing]
+    A[Optimization Agent] --> LG[LangGraph Agent Policy]
+    LG --> L[Planner / Data / Modeler / Solver / Verifier / Explainer]
     L --> C[MCP Client]
     O[FastAPI Ask Service / 本地规则路由] --> G[MCP Optimization Gateway]
     C --> D[Document MCP]
@@ -25,7 +26,9 @@ flowchart TD
     E --> O
 ```
 
-LLM 只负责规划、建模语义和工具路由。数据字段校验与求解器调用是确定性代码，不由 LLM 临时生成。本地规则路由和 MCP Server 现在共用同一个 `MCP Optimization Gateway`，不再分别调用底层求解器。
+Agent policy 负责规划、建模语义和工具路由；当前 policy 由本地规则与可选 LLM 组成，后续将用可验证轨迹训练。数据字段校验与求解器调用是确定性代码，不由 LLM 临时生成。本地规则路由和 MCP Server 现在共用同一个 `MCP Optimization Gateway`，不再分别调用底层求解器。
+
+LangGraph 状态图和实时事件协议见 [Agent 工作流文档](agent-workflow.md)，策略学习的研究问题见 [研究方向文档](research-direction.md)。
 
 ## Gateway 迁移状态
 

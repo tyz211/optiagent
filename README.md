@@ -1,6 +1,6 @@
 # OptiAgent
 
-> 一个面向运筹优化场景的本地 Agent 系统：支持自然语言提问、CSV/JSON 数据输入、RAG 建模知识检索、工具调用与优化求解。
+> 一个面向运筹优化场景的 Agentic 系统：学习如何规划建模、选择工具、调用求解器并验证结果。
 
 > A local-first optimization agent for operations research workflows, combining natural language understanding, structured modeling, RAG, solver execution, and explainable results.
 
@@ -12,7 +12,15 @@
 ![SQLite](https://img.shields.io/badge/SQLite-Local%20Storage-003B57?logo=sqlite&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-该项目尝试把 **自然语言理解、结构化建模、RAG、工具路由、求解器执行、结果解释** 串成一条完整闭环，让用户可以像和分析助手对话一样提出优化问题，并得到可审计、可解释、可执行的求解结果。
+该项目尝试把 **自然语言理解、结构化建模、RAG、工具路由、求解器执行、结果验证与策略学习** 串成一条完整闭环，让用户可以像和分析助手对话一样提出优化问题，并得到可审计、可解释、可执行的求解结果。
+
+项目的长期研究问题是：
+
+$$
+\boxed{\text{Learning an Agent Policy for Automated Optimization Modeling and Solving}}
+$$
+
+重点不只是让 LLM “生成一个模型”，而是学习一个可评估、可改进的 Agent policy，使系统能在澄清、检索、建模、工具选择、求解、验证和修复之间作出序列决策。完整定义见 [研究方向文档](docs/research-direction.md)。
 
 ## 目录
 - [Who Is This For](#who-is-this-for)
@@ -20,6 +28,7 @@
 - [项目的优势](#项目的优势)
 - [效果图](#效果图)
 - [架构图](#架构图)
+- [研究目标](#研究目标)
 - [当前能力](#当前能力)
 - [已支持的可执行问题](#已支持的可执行问题)
 - [系统如何工作](#系统如何工作)
@@ -63,7 +72,13 @@
 
 ![通用运筹优化 Agent 技术架构图](assets/architecture.png)
 
-MCP 层已拆分为 Document / Data / Solver 三个可独立运行的服务，通过版本化的 `ProblemEnvelope` 与 `SolveEnvelope` 交换结构化数据。详细设计、工具清单和运行方式见 [MCP 架构文档](docs/mcp-architecture.md)。
+当前执行层使用 LangGraph 编排 `Planner → Data Agent → Modeler → Solver → Verifier → Explainer`，MCP 层拆分为 Document / Data / Solver 三个可独立运行的服务，通过版本化的 `ProblemEnvelope` 与 `SolveEnvelope` 交换结构化数据。详细设计见 [Agent 工作流](docs/agent-workflow.md) 与 [MCP 架构文档](docs/mcp-architecture.md)。
+
+## 研究目标
+
+OptiAgent 将优化建模与求解形式化为一个序列决策问题。策略 $\pi_\theta(a_t\mid s_t)$ 根据当前问题、数据画像、建模草案、工具历史和验证反馈选择下一步动作；求解器与验证器提供可执行、可复算的环境反馈。项目计划以规则/LLM 轨迹为起点，逐步加入轨迹数据集、可验证奖励、模仿学习、离线 RL 和在线策略评估。
+
+当前阶段的边界很明确：已经具备可观测的状态图与 MCP 环境，但尚未宣称已训练出 RL policy。第一周交付的是后续采集 trajectory 与计算 reward 的基础设施。
 
 ## 当前能力
 
@@ -72,6 +87,7 @@ MCP 层已拆分为 Document / Data / Solver 三个可独立运行的服务，�
 - 将自然语言问题转换为 `ProblemSpec`
 - 输出目标函数、变量、约束、数据要求和推荐求解器
 - 支持 LLM 路由与本地规则路由双模式
+- 通过 LangGraph 保存六个 Agent 节点的状态与执行轨迹
 
 ### 2. RAG 知识增强
 
@@ -132,20 +148,21 @@ MCP 层已拆分为 Document / Data / Solver 三个可独立运行的服务，�
 ### 流式输出
 
 - 前端默认调用 `/api/ask/stream`，通过 `fetch + ReadableStream` 接收 SSE 事件。
-- 后端会依次推送 `status`、`answer_delta` 和 `final`：用户先看到阶段状态和逐段回答，最终再渲染完整结构化卡片、决策表和 Agent 轨迹。
+- 后端会推送 `status`、`agent_step`、`answer_delta` 和 `final`：用户可以实时看到六个节点的开始、完成或失败状态，最终再渲染完整结构化卡片、决策表和 Agent 轨迹。
 - `/api/ask` 保留为非流式兼容接口。
 
 ## 系统如何工作
 
 ```text
 用户问题 / 上传数据
-  -> LLM 路由器 或 本地规则路由器
-  -> ProblemSpec 结构化建模
-  -> RAG 检索
-  -> 数据解析与校验
-  -> 求解器执行
-  -> 最优性检查
-  -> 结构化结果输出
+  -> LangGraph Agent Policy
+     -> Planner
+     -> Data Agent
+     -> Modeler
+     -> Solver -> MCP Gateway -> Document / Data / Solver MCP
+     -> Verifier
+     -> Explainer
+  -> 轨迹与结构化结果持久化
 ```
 
 对于仓库选址等供应链问题，系统支持：
@@ -255,6 +272,7 @@ http://127.0.0.1:8000
 api/
   main.py                  FastAPI 路由、上传、配置入口
   database.py              SQLite 持久化
+  services/agent_workflow.py  LangGraph 六节点状态图与运行事件
   services/ask_service.py  提问编排、RAG、数据解析、工具调用响应
 
 optiagent/
@@ -424,3 +442,12 @@ python3 -m unittest discover -s tests
 python3 -m compileall api optiagent
 node --check web/app.js
 ```
+
+## Roadmap
+
+- 构建 optimization-agent trajectory 数据集，记录状态、动作、工具观察与终局结果。
+- 实现确定性的 Solution Verifier，把约束违反、目标值复算和求解状态变成奖励信号。
+- 建立 rule、LLM planner、behavior cloning、offline RL 的统一评测基线。
+- 学习高层工具路由与失败恢复策略，先不直接学习求解器内部搜索。
+- 加入预算约束下的 solver portfolio routing，联合优化正确率、解质量、延迟和调用成本。
+- 扩展 VRP/VRPTW、网络流、员工排班与鲁棒优化任务。

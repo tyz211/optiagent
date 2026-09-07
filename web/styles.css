@@ -9,6 +9,8 @@
   --hover: #ececef;
   --accent: #111827;
   --blue: #0b84ff;
+  --agent-blue: #2563eb;
+  --agent-track: #d8e1ee;
   --ok: #16a34a;
   --error: #b91c1c;
   --shadow: 0 18px 60px rgba(15, 17, 21, 0.08);
@@ -747,6 +749,194 @@ textarea:focus {
   border-color: #cbd5e1;
 }
 
+/* Agent 执行轨道沿用原界面的克制配色，用节点状态承担主要视觉信息。 */
+.agent-graph-card {
+  margin-top: 14px;
+  border: 1px solid #dfe5ee;
+  border-radius: 18px;
+  background-color: #fbfcfe;
+  background-image: radial-gradient(#dce4ef 0.7px, transparent 0.7px);
+  background-size: 14px 14px;
+  overflow: hidden;
+}
+
+.agent-graph-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid #e5eaf1;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.agent-graph-head span,
+.agent-graph-head small {
+  display: block;
+}
+
+.agent-graph-head span {
+  font-weight: 760;
+}
+
+.agent-graph-head small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.agent-graph-head em {
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #eef6f0;
+  color: #287044;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.agent-graph-head em.failed {
+  background: #fef2f2;
+  color: var(--error);
+}
+
+.agent-graph-live {
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+  background: #fbfcfe;
+  overflow-x: auto;
+}
+
+.agent-graph-card > .agent-flow {
+  padding: 16px;
+}
+
+.agent-flow {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(118px, 1fr));
+  min-width: 760px;
+  overflow-x: auto;
+}
+
+.agent-node {
+  position: relative;
+  min-width: 0;
+  padding: 0 7px;
+}
+
+.agent-node-marker {
+  position: relative;
+  height: 18px;
+}
+
+.agent-node:not(:first-child) .agent-node-marker::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: 50%;
+  width: 100%;
+  height: 2px;
+  background: var(--agent-track);
+}
+
+.agent-node.completed:not(:first-child) .agent-node-marker::before,
+.agent-node.running:not(:first-child) .agent-node-marker::before {
+  background: #8aa9d8;
+}
+
+.agent-node-marker span {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 16px;
+  height: 16px;
+  margin: 0 auto;
+  border: 4px solid #fff;
+  border-radius: 50%;
+  background: #c9d2df;
+  box-shadow: 0 0 0 1px #c9d2df;
+}
+
+.agent-node.completed .agent-node-marker span {
+  background: #1f3558;
+  box-shadow: 0 0 0 1px #1f3558;
+}
+
+.agent-node.running .agent-node-marker span {
+  background: var(--agent-blue);
+  box-shadow: 0 0 0 1px var(--agent-blue), 0 0 0 6px rgba(37, 99, 235, 0.12);
+  animation: agent-pulse 1.4s ease-in-out infinite;
+}
+
+.agent-node.failed .agent-node-marker span {
+  background: var(--error);
+  box-shadow: 0 0 0 1px var(--error), 0 0 0 6px rgba(185, 28, 28, 0.1);
+}
+
+.agent-node-copy {
+  margin-top: 7px;
+  text-align: center;
+}
+
+.agent-node-copy > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 5px;
+}
+
+.agent-node-copy strong {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.agent-node-copy em {
+  color: var(--muted);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.agent-node.running .agent-node-copy em {
+  color: var(--agent-blue);
+}
+
+.agent-node.failed .agent-node-copy em {
+  color: var(--error);
+}
+
+.agent-node-copy small {
+  display: -webkit-box;
+  min-height: 30px;
+  margin-top: 5px;
+  overflow: hidden;
+  color: #657084;
+  font-size: 10px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.agent-node-copy time {
+  display: block;
+  margin-top: 4px;
+  color: #929baa;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+}
+
+@keyframes agent-pulse {
+  0%,
+  100% {
+    transform: scale(0.9);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+}
+
 .streaming-message .stream-status {
   color: var(--muted);
   font-size: 12px;
@@ -997,5 +1187,11 @@ th {
 
   .top-actions {
     gap: 6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-node.running .agent-node-marker span {
+    animation: none;
   }
 }

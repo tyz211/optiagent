@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from io import StringIO
 import json
 import math
@@ -47,20 +48,69 @@ EXECUTABLE_TEMPLATE_IDS = {
 }
 
 
+@dataclass(frozen=True)
+class AskExecutionContext:
+    """Planner 节点准备的请求上下文，供后续状态图节点复用。"""
+
+    dataset_id: int | None
+    llm_config: LLMConfig | None
+    uploaded_context: list[dict]
+    agent_plan: dict | None
+    plan_warning: str | None
+    preferred_template: str | None
+    solver_intent: bool
+
+
+def prepare_ask_context(
+    question: str,
+    requested_dataset_id: int | None,
+    user_id: int | None,
+    conversation_id: int | None,
+) -> AskExecutionContext:
+    """集中完成上下文读取与问题路由，避免状态图执行阶段重复调用 LLM。"""
+
+    dataset_id = requested_dataset_id or get_active_dataset_id_or_none(
+        user_id=user_id,
+        conversation_id=conversation_id,
+    )
+    llm_config = _active_llm_config(user_id)
+    uploaded_context = list_uploaded_files(limit=30, user_id=user_id, conversation_id=conversation_id)
+    agent_plan, plan_warning = _llm_agent_plan(question, uploaded_context, llm_config)
+    preferred_template = agent_plan.get("template_id") if agent_plan else None
+    return AskExecutionContext(
+        dataset_id=dataset_id,
+        llm_config=llm_config,
+        uploaded_context=uploaded_context,
+        agent_plan=agent_plan,
+        plan_warning=plan_warning,
+        preferred_template=preferred_template,
+        solver_intent=_should_solve_optimization(question),
+    )
+
+
 def handle_ask(
     question: str,
     requested_dataset_id: int | None,
     mcp_config: str,
     user_id: int | None,
     conversation_id: int | None,
+    prepared_context: AskExecutionContext | None = None,
 ) -> dict:
-    dataset_id = requested_dataset_id or get_active_dataset_id_or_none(user_id=user_id, conversation_id=conversation_id)
-    llm_config = _active_llm_config(user_id)
-    uploaded_context = list_uploaded_files(limit=30, user_id=user_id, conversation_id=conversation_id)
+    """执行现有业务回答链路；状态图可传入已经准备好的 Planner 上下文。"""
 
-    agent_plan, plan_warning = _llm_agent_plan(question, uploaded_context, llm_config)
-    preferred_template = agent_plan.get("template_id") if agent_plan else None
-    solver_intent = _should_solve_optimization(question)
+    context = prepared_context or prepare_ask_context(
+        question,
+        requested_dataset_id,
+        user_id,
+        conversation_id,
+    )
+    dataset_id = context.dataset_id
+    llm_config = context.llm_config
+    uploaded_context = context.uploaded_context
+    agent_plan = context.agent_plan
+    plan_warning = context.plan_warning
+    preferred_template = context.preferred_template
+    solver_intent = context.solver_intent
 
     uploaded_generic = _solve_uploaded_generic(question, uploaded_context, preferred_template) if solver_intent else None
     if uploaded_generic and requested_dataset_id is None:
@@ -744,6 +794,7 @@ def _should_solve_optimization(question: str) -> bool:
     text = (question or "").lower()
     strong_solve_keywords = [
         "求解",
+        "解决",
         "最优",
         "最小化",
         "最大化",

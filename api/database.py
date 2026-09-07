@@ -479,6 +479,30 @@ def save_run(
         return int(cursor.lastrowid)
 
 
+def update_run_result(run_id: int, result: dict) -> None:
+    """在 Agent 状态图完成后补充最终轨迹和校验信息。"""
+
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE runs
+            SET answer = ?, objective_value = ?, transport_cost = ?, fixed_cost = ?,
+                status = ?, open_warehouses = ?, result_json = ?
+            WHERE id = ?
+            """,
+            (
+                result.get("answer", ""),
+                result.get("objective_value"),
+                result.get("transport_cost"),
+                result.get("fixed_cost"),
+                result.get("status", ""),
+                json.dumps(result.get("open_warehouses", []), ensure_ascii=False),
+                json.dumps(result, ensure_ascii=False, default=str),
+                run_id,
+            ),
+        )
+
+
 def list_runs(limit: int = 20, user_id: int | None = None, conversation_id: int | None = None) -> list[dict]:
     init_db()
     with connect() as conn:

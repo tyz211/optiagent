@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Added an observable LangGraph workflow with Planner, Data Agent, Modeler, Solver, Verifier, and Explainer nodes.
+- Added real-time `agent_step` SSE events, persisted execution traces, and an in-product six-stage execution rail.
+- Added the research direction **Learning an Agent Policy for Automated Optimization Modeling and Solving**, including a policy/reward formulation and RL roadmap.
 - Added standalone Document, Data, and Solver MCP servers with stdio and Streamable HTTP transports.
 - Added versioned `ProblemEnvelope` and `SolveEnvelope` contracts with source provenance and validation reports.
 - Added built-in MCP discovery, per-server degradation, prefixed tool names, and a read-only `/api/mcp` manifest.
@@ -13,6 +16,7 @@ All notable changes to this project will be documented in this file.
 
 ### Improved
 
+- Improved local intent routing so natural wording such as “解决” enters the optimization path.
 - Improved the LangChain supervisor so MCP discovery happens only when LLM tool routing is active.
 - Migrated local-rule, uploaded-file, inline-JSON, and facility-location solver paths to the shared MCP Optimization Gateway.
 - Removed duplicate local solving for structured datasets when LLM routing is disabled.

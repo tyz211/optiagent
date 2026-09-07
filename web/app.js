@@ -13,6 +13,16 @@ const providers = {
   },
 };
 
+// 前端预先绘制完整工作流，SSE 到达后只更新对应节点状态。
+const agentNodeBlueprint = [
+  { node_id: "planner", label: "Planner", description: "识别意图与规划工具链", sequence: 1 },
+  { node_id: "data", label: "Data Agent", description: "定位并检查当前数据上下文", sequence: 2 },
+  { node_id: "modeler", label: "Modeler", description: "生成结构化问题定义", sequence: 3 },
+  { node_id: "solver", label: "Solver", description: "通过 MCP Gateway 执行求解", sequence: 4 },
+  { node_id: "verifier", label: "Verifier", description: "检查响应合同与求解状态", sequence: 5 },
+  { node_id: "explainer", label: "Explainer", description: "组织业务结论与可审计轨迹", sequence: 6 },
+];
+
 const state = {
   activeDatasetId: null,
   activeConversationId: Number(localStorage.getItem("optiagent_active_conversation_id") || 0) || null,
@@ -59,17 +69,6 @@ const formatMetricItem = (item, result) => {
   }
   return fmtMetric(item);
 };
-
-function formatBytes(value) {
-  const bytes = Number(value || 0);
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  }
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
 
 function formatBytes(value) {
   const bytes = Number(value || 0);
@@ -606,6 +605,9 @@ async function ask() {
       onDelta(text) {
         streamingMessage.append(text);
       },
+      onStep(event) {
+        streamingMessage.updateStep(event);
+      },
     });
     if (result.conversation_id) {
       setActiveConversation(result.conversation_id);
@@ -655,6 +657,8 @@ async function streamAsk(payload, handlers = {}) {
       const event = parseSseEvent(part);
       if (event.type === "status") {
         handlers.onStatus?.(event.data.message);
+      } else if (event.type === "agent_step") {
+        handlers.onStep?.(event.data);
       } else if (event.type === "answer_delta") {
         handlers.onDelta?.(event.data.text || "");
       } else if (event.type === "final") {
@@ -668,6 +672,8 @@ async function streamAsk(payload, handlers = {}) {
     const event = parseSseEvent(buffer);
     if (event.type === "final") {
       finalResult = event.data;
+    } else if (event.type === "agent_step") {
+      handlers.onStep?.(event.data);
     } else if (event.type === "error") {
       throw new Error(event.data.message || "流式回答失败");
     }
@@ -863,6 +869,7 @@ function appendStreamingAssistantMessage() {
     return {
       append() {},
       setStatus() {},
+      updateStep() {},
       fail(message) {
         appendErrorMessage(message);
       },
@@ -871,11 +878,15 @@ function appendStreamingAssistantMessage() {
   }
   const article = document.createElement("article");
   article.className = "message assistant-message streaming-message";
+  const nodeStates = new Map(agentNodeBlueprint.map((node) => [node.node_id, { ...node, status: "pending" }]));
   article.innerHTML = `
     <div class="avatar">OA</div>
     <div class="message-body">
       <div class="result-card">
         <div class="card-title"><span>正在生成回答</span><span class="stream-status">连接中...</span></div>
+        <div class="agent-graph-live" aria-live="polite">
+          ${buildAgentGraphHtml(Array.from(nodeStates.values()), true)}
+        </div>
         <div class="answer streaming-answer"></div>
       </div>
     </div>
@@ -883,6 +894,7 @@ function appendStreamingAssistantMessage() {
   stream.appendChild(article);
   const answer = article.querySelector(".streaming-answer");
   const status = article.querySelector(".stream-status");
+  const graph = article.querySelector(".agent-graph-live");
   return {
     append(text) {
       if (!answer || !text) {
@@ -895,6 +907,17 @@ function appendStreamingAssistantMessage() {
       if (status) {
         status.textContent = message || "运行中...";
       }
+    },
+    updateStep(event) {
+      if (!event?.node_id) {
+        return;
+      }
+      const current = nodeStates.get(event.node_id) || {};
+      nodeStates.set(event.node_id, { ...current, ...event });
+      if (graph) {
+        graph.innerHTML = buildAgentGraphHtml(Array.from(nodeStates.values()), true);
+      }
+      scrollChatToBottom();
     },
     fail(message) {
       if (status) {
@@ -929,6 +952,17 @@ function appendAssistantMessage(result) {
   const answerBlock = result.generic_result || result.structured_answer ? "" : `<div class="answer">${escapeHtml(answer)}</div>`;
   const toolNames = (result.tool_names || []).map((name) => `<span>${escapeHtml(name)}</span>`).join("");
   const ragDocs = (result.rag_docs || []).map((name) => `<span>${escapeHtml(name)}</span>`).join("");
+  const graphNodes = result.agent_graph?.nodes || [];
+  const graphPassed = result.workflow_verification?.passed;
+  const graphCard = graphNodes.length
+    ? `<div class="agent-graph-card">
+        <div class="agent-graph-head">
+          <div><span>Agent 执行图</span><small>LangGraph · ${graphNodes.length} 个节点</small></div>
+          <em class="${graphPassed === false ? "failed" : "passed"}">${graphPassed === false ? "检查异常" : "运行完成"}</em>
+        </div>
+        ${buildAgentGraphHtml(graphNodes)}
+      </div>`
+    : "";
   const agentSteps = (result.agent_steps || []).map((step) => `
     <tr>
       <td>${escapeHtml(step.step)}</td>
@@ -974,6 +1008,7 @@ function appendAssistantMessage(result) {
         <div class="result-summary">${resultSummary}</div>
         ${answerBlock}
       </div>
+      ${graphCard}
       ${tableCard}
       ${analysis.trim() ? `<div class="model-card">
         <details class="trace-details">
@@ -987,6 +1022,34 @@ function appendAssistantMessage(result) {
   `;
   stream.appendChild(article);
   scrollChatToBottom();
+}
+
+function buildAgentGraphHtml(nodes, live = false) {
+  const normalized = [...nodes].sort((left, right) => Number(left.sequence || 0) - Number(right.sequence || 0));
+  const stateLabels = {
+    pending: "等待",
+    running: "运行中",
+    completed: "完成",
+    failed: "失败",
+  };
+  return `
+    <div class="agent-flow ${live ? "is-live" : ""}" role="list" aria-label="Agent 执行流程">
+      ${normalized.map((node) => {
+        const nodeStatus = node.status || "pending";
+        const elapsed = node.elapsed_ms == null ? "" : `${fmt(node.elapsed_ms)} ms`;
+        return `
+          <div class="agent-node ${escapeHtml(nodeStatus)}" role="listitem">
+            <div class="agent-node-marker"><span></span></div>
+            <div class="agent-node-copy">
+              <div><strong>${escapeHtml(node.label || node.node_id)}</strong><em>${escapeHtml(stateLabels[nodeStatus] || nodeStatus)}</em></div>
+              <small>${escapeHtml(node.detail || node.description || "等待上游节点")}</small>
+              ${elapsed ? `<time>${escapeHtml(elapsed)}</time>` : ""}
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
 }
 
 function buildResultSummaryHtml(result) {
