@@ -39,6 +39,7 @@ class MCPContractTests(unittest.TestCase):
         self.assertEqual("OPTIMAL", result.status)
         self.assertGreater(result.objective_value or 0, 0)
         self.assertTrue(result.provenance)
+        self.assertTrue(result.solution_verification.passed)
 
     def test_invalid_knapsack_stops_before_solver(self) -> None:
         report = validate_problem_data(
@@ -60,6 +61,7 @@ class MCPProtocolTests(unittest.TestCase):
         self.assertIn("document_document_read", names)
         self.assertIn("data_data_build_problem", names)
         self.assertIn("solver_solver_solve_problem", names)
+        self.assertIn("solver_solver_verify_solution", names)
 
     def test_data_to_solver_stdio_round_trip(self) -> None:
         """验证 Data MCP 的标准输出可直接作为 Solver MCP 的标准输入。"""
@@ -94,6 +96,16 @@ class MCPProtocolTests(unittest.TestCase):
                     self.assertFalse(solve_result.isError)
                     self.assertEqual("OPTIMAL", solve_result.structuredContent["status"])
                     self.assertGreater(solve_result.structuredContent["objective_value"], 0)
+                    self.assertTrue(solve_result.structuredContent["solution_verification"]["passed"])
+                    verification_result = await solver_session.call_tool(
+                        "solver_verify_solution",
+                        {
+                            "problem": problem_result.structuredContent,
+                            "solution": solve_result.structuredContent,
+                        },
+                    )
+                    self.assertFalse(verification_result.isError)
+                    self.assertTrue(verification_result.structuredContent["passed"])
 
         asyncio.run(run_round_trip())
 

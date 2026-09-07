@@ -24,6 +24,7 @@ class GenericSolveResult:
     summary: str
     decisions: list[dict[str, Any]] = field(default_factory=list)
     metrics: dict[str, Any] = field(default_factory=dict)
+    solution_verification: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     data_source: str = "用户数据"
 

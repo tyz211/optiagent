@@ -4,12 +4,14 @@ from mcp.server.fastmcp import FastMCP
 
 from optiagent.mcp_contracts import (
     ProblemEnvelope,
+    SolutionVerificationReport,
     SolveEnvelope,
     SolverCapability,
     ValidationReport,
 )
 from optiagent.mcp_servers.common import run_server
 from optiagent.optimization_gateway import solve_problem_envelope, validate_problem_envelope
+from optiagent.solution_verifier import verify_solution
 from optiagent.solver_registry import list_generic_solvers
 
 
@@ -77,6 +79,16 @@ def solver_solve_problem(problem: ProblemEnvelope, time_limit: int | None = None
     """根据 ProblemEnvelope.template_id 选择已注册求解器，返回统一结果。"""
 
     return solve_problem_envelope(problem, time_limit=time_limit)
+
+
+@mcp.tool(title="独立验证优化解")
+def solver_verify_solution(
+    problem: ProblemEnvelope,
+    solution: SolveEnvelope,
+) -> SolutionVerificationReport:
+    """根据原始问题数据复算约束和目标值，不信任求解器汇总字段。"""
+
+    return verify_solution(problem, solution)
 
 
 if __name__ == "__main__":

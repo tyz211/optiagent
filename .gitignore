@@ -7,6 +7,7 @@ __pycache__/
 *.pyd
 
 data/optiagent.sqlite3
+data/rl/*.jsonl
 
 .env
 .env.*
@@ -22,3 +23,5 @@ docs/*
 !docs/mcp-architecture.md
 !docs/agent-workflow.md
 !docs/research-direction.md
+!docs/trajectory-data.md
+!docs/rl-environment.md

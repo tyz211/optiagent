@@ -63,6 +63,23 @@ class ValidationReport(BaseModel):
     checks: dict[str, Any] = Field(default_factory=dict)
 
 
+class SolutionVerificationReport(BaseModel):
+    """对求解器返回决策进行独立数学复算的报告。"""
+
+    schema_version: str = SCHEMA_VERSION
+    template_id: str
+    verifiable: bool = False
+    passed: bool = False
+    feasible: bool | None = None
+    objective_consistent: bool | None = None
+    reported_objective: float | None = None
+    recomputed_objective: float | None = None
+    max_constraint_violation: float | None = None
+    checks: dict[str, Any] = Field(default_factory=dict)
+    violations: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class ProblemEnvelope(BaseModel):
     """Document/Data MCP 与 Solver MCP 之间的唯一公共输入。"""
 
@@ -99,4 +116,5 @@ class SolveEnvelope(BaseModel):
     metrics: dict[str, Any] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     validation: ValidationReport = Field(default_factory=ValidationReport)
+    solution_verification: SolutionVerificationReport | None = None
     provenance: list[SourceReference] = Field(default_factory=list)

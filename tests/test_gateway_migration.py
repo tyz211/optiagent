@@ -36,6 +36,7 @@ class GatewayMigrationTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual("OPTIMAL", result.status)
         self.assertEqual(13.0, result.objective_value)
+        self.assertTrue(result.solution_verification["passed"])
 
     def test_uploaded_csv_uses_gateway_contract(self) -> None:
         csv_text = "item,value,weight\nA,8,3\nB,5,2\n"
@@ -66,6 +67,7 @@ class GatewayMigrationTests(unittest.TestCase):
         self.assertEqual(1_021_700.0, result.objective_value)
         self.assertFalse(result.warehouse_summary.empty)
         self.assertFalse(result.allocations.empty)
+        self.assertTrue(result.solution_verification["passed"])
 
     def test_invalid_data_is_blocked_before_solver(self) -> None:
         result = solve_generic_via_gateway(

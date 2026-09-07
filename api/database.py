@@ -6,6 +6,7 @@ import json
 import sqlite3
 import secrets
 from typing import Iterator
+from uuid import uuid4
 
 import pandas as pd
 
@@ -127,6 +128,51 @@ def init_db() -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(conversation_id) REFERENCES conversations(id)
             );
+
+            CREATE TABLE IF NOT EXISTS agent_episodes (
+                episode_id TEXT PRIMARY KEY,
+                user_id INTEGER,
+                conversation_id INTEGER,
+                run_id INTEGER,
+                question TEXT NOT NULL,
+                policy_name TEXT NOT NULL,
+                policy_version TEXT NOT NULL,
+                status TEXT NOT NULL,
+                template_id TEXT,
+                total_reward REAL,
+                reward_json TEXT NOT NULL DEFAULT '{}',
+                result_json TEXT NOT NULL DEFAULT '{}',
+                error TEXT,
+                started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                completed_at TEXT,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id),
+                FOREIGN KEY(run_id) REFERENCES runs(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_steps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                episode_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                node_id TEXT NOT NULL,
+                attempt INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL,
+                state_json TEXT NOT NULL DEFAULT '{}',
+                action_json TEXT NOT NULL DEFAULT '{}',
+                observation_json TEXT NOT NULL DEFAULT '{}',
+                reward_json TEXT NOT NULL DEFAULT '{}',
+                error TEXT,
+                elapsed_ms REAL,
+                started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                completed_at TEXT,
+                FOREIGN KEY(episode_id) REFERENCES agent_episodes(episode_id),
+                UNIQUE(episode_id, node_id, attempt)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_agent_episodes_scope
+            ON agent_episodes(user_id, conversation_id, started_at);
+
+            CREATE INDEX IF NOT EXISTS idx_agent_steps_episode
+            ON agent_steps(episode_id, sequence, attempt);
             """
         )
         _ensure_column(conn, "llm_configs", "user_id", "INTEGER")
@@ -503,6 +549,288 @@ def update_run_result(run_id: int, result: dict) -> None:
         )
 
 
+def create_agent_episode(
+    question: str,
+    user_id: int | None,
+    conversation_id: int | None,
+    *,
+    policy_name: str = "langgraph_baseline",
+    policy_version: str = "1.0",
+) -> str:
+    """创建一次 Agent episode，并返回跨 API 稳定的字符串标识。"""
+
+    init_db()
+    episode_id = uuid4().hex
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO agent_episodes (
+                episode_id, user_id, conversation_id, question,
+                policy_name, policy_version, status
+            ) VALUES (?, ?, ?, ?, ?, ?, 'running')
+            """,
+            (episode_id, user_id, conversation_id, question, policy_name, policy_version),
+        )
+    return episode_id
+
+
+def start_agent_step(
+    episode_id: str,
+    sequence: int,
+    node_id: str,
+    state: dict,
+    action: dict,
+    *,
+    attempt: int = 1,
+) -> None:
+    """记录 policy 在给定状态下选择的节点动作。"""
+
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO agent_steps (
+                episode_id, sequence, node_id, attempt, status, state_json, action_json
+            ) VALUES (?, ?, ?, ?, 'running', ?, ?)
+            ON CONFLICT(episode_id, node_id, attempt) DO UPDATE SET
+                sequence = excluded.sequence,
+                status = 'running',
+                state_json = excluded.state_json,
+                action_json = excluded.action_json,
+                observation_json = '{}',
+                reward_json = '{}',
+                error = NULL,
+                elapsed_ms = NULL,
+                started_at = CURRENT_TIMESTAMP,
+                completed_at = NULL
+            """,
+            (episode_id, sequence, node_id, attempt, _json_dump(state), _json_dump(action)),
+        )
+
+
+def finish_agent_step(
+    episode_id: str,
+    node_id: str,
+    observation: dict,
+    *,
+    status: str,
+    elapsed_ms: float,
+    reward: dict | None = None,
+    error: str | None = None,
+    attempt: int = 1,
+) -> None:
+    """补充工具观察、节点奖励、耗时和成功或失败状态。"""
+
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE agent_steps
+            SET status = ?, observation_json = ?, reward_json = ?, error = ?,
+                elapsed_ms = ?, completed_at = CURRENT_TIMESTAMP
+            WHERE episode_id = ? AND node_id = ? AND attempt = ?
+            """,
+            (
+                status,
+                _json_dump(observation),
+                _json_dump(reward or {}),
+                error,
+                elapsed_ms,
+                episode_id,
+                node_id,
+                attempt,
+            ),
+        )
+
+
+def set_agent_episode_template(episode_id: str, template_id: str) -> None:
+    """Modeler 完成后尽早标注任务类型，保留后续失败轨迹的语义。"""
+
+    with connect() as conn:
+        conn.execute(
+            "UPDATE agent_episodes SET template_id = ? WHERE episode_id = ?",
+            (template_id, episode_id),
+        )
+
+
+def complete_agent_episode(
+    episode_id: str,
+    *,
+    status: str,
+    run_id: int | None = None,
+    template_id: str | None = None,
+    reward: dict | None = None,
+    result: dict | None = None,
+    error: str | None = None,
+) -> None:
+    """结束 episode，并保存训练所需的终局奖励和最终结果。"""
+
+    reward_payload = reward or {}
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE agent_episodes
+            SET run_id = ?, status = ?, template_id = COALESCE(?, template_id), total_reward = ?,
+                reward_json = ?, result_json = ?, error = ?, completed_at = CURRENT_TIMESTAMP
+            WHERE episode_id = ?
+            """,
+            (
+                run_id,
+                status,
+                template_id,
+                reward_payload.get("total"),
+                _json_dump(reward_payload),
+                _json_dump(result or {}),
+                error,
+                episode_id,
+            ),
+        )
+
+
+def list_agent_episodes(
+    *,
+    user_id: int | None,
+    conversation_id: int | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """按用户与可选会话列出 episode 摘要。"""
+
+    init_db()
+    clauses = ["user_id IS NULL" if user_id is None else "user_id = ?"]
+    params: list = [] if user_id is None else [user_id]
+    if conversation_id is not None:
+        clauses.append("conversation_id = ?")
+        params.append(conversation_id)
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT episode_id, user_id, conversation_id, run_id, question,
+                   policy_name, policy_version, status, template_id, total_reward,
+                   error, started_at, completed_at
+            FROM agent_episodes
+            WHERE {' AND '.join(clauses)}
+            ORDER BY started_at DESC, episode_id DESC
+            LIMIT ?
+            """,
+            [*params, max(1, min(int(limit), 500))],
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_agent_episode(episode_id: str, *, user_id: int | None) -> dict | None:
+    """读取完整 episode 与有序 step，供审计和回放使用。"""
+
+    init_db()
+    user_clause = "user_id IS NULL" if user_id is None else "user_id = ?"
+    params = [episode_id] if user_id is None else [episode_id, user_id]
+    with connect() as conn:
+        episode_row = conn.execute(
+            f"SELECT * FROM agent_episodes WHERE episode_id = ? AND {user_clause}",
+            params,
+        ).fetchone()
+        if not episode_row:
+            return None
+        step_rows = conn.execute(
+            "SELECT * FROM agent_steps WHERE episode_id = ? ORDER BY sequence ASC, attempt ASC, id ASC",
+            (episode_id,),
+        ).fetchall()
+    episode = dict(episode_row)
+    for field in ("reward_json", "result_json"):
+        episode[field.removesuffix("_json")] = _json_load(episode.pop(field))
+    steps = []
+    for row in step_rows:
+        step = dict(row)
+        for field in ("state_json", "action_json", "observation_json", "reward_json"):
+            step[field.removesuffix("_json")] = _json_load(step.pop(field))
+        steps.append(step)
+    episode["steps"] = steps
+    return episode
+
+
+def get_training_episode(episode_id: str, *, user_id: int | None) -> dict | None:
+    """转换为离线 RL/行为克隆可直接消费的 transition 视图。"""
+
+    episode = get_agent_episode(episode_id, user_id=user_id)
+    if episode is None:
+        return None
+    steps = episode["steps"]
+    terminal_episode = episode["status"] in {"completed", "failed"}
+    transitions = []
+    for index, step in enumerate(steps):
+        is_terminal = terminal_episode and index == len(steps) - 1
+        next_state = steps[index + 1]["state"] if index + 1 < len(steps) else {"terminal": terminal_episode}
+        transitions.append(
+            {
+                "t": index,
+                "node_id": step["node_id"],
+                "attempt": step["attempt"],
+                "state": step["state"],
+                "action": step["action"],
+                "observation": step["observation"],
+                "next_state": next_state,
+                "reward": float(episode.get("total_reward") or 0.0) if is_terminal else 0.0,
+                "done": is_terminal,
+                "status": step["status"],
+            }
+        )
+    decision_steps = [step for step in steps if (step.get("action") or {}).get("candidate_ids")]
+    decision_transitions = []
+    for index, step in enumerate(decision_steps):
+        action = step["action"]
+        is_terminal_decision = terminal_episode and index == len(decision_steps) - 1
+        next_step = decision_steps[index + 1] if index + 1 < len(decision_steps) else None
+        decision_transitions.append(
+            {
+                "t": index,
+                "node_id": step["node_id"],
+                "attempt": step["attempt"],
+                "state": step["state"],
+                "candidate_actions": action.get("candidate_ids", []),
+                "action_mask": action.get("action_mask", []),
+                "action": action.get("selected_action"),
+                "observation": step["observation"],
+                "next_state": next_step["state"] if next_step else {"terminal": terminal_episode},
+                "reward": float(episode.get("total_reward") or 0.0) if is_terminal_decision else 0.0,
+                "done": is_terminal_decision,
+                "status": step["status"],
+            }
+        )
+    template_id = episode["template_id"] or _template_from_steps(steps)
+    return {
+        "schema_version": "1.0",
+        "episode_id": episode_id,
+        "policy": {"name": episode["policy_name"], "version": episode["policy_version"]},
+        "task": {"question": episode["question"], "template_id": template_id},
+        "status": episode["status"],
+        "total_reward": episode["total_reward"],
+        "transitions": transitions,
+        "decision_transitions": decision_transitions,
+    }
+
+
+def _template_from_steps(steps: list[dict]) -> str | None:
+    """失败 episode 可从 Modeler observation 恢复模板标签。"""
+
+    for step in steps:
+        problem_spec = (step.get("observation") or {}).get("problem_spec") or {}
+        if problem_spec.get("template_id"):
+            return str(problem_spec["template_id"])
+    return None
+
+
+def _json_dump(value: object) -> str:
+    """统一数据库 JSON 编码，保留中文并兼容模型对象。"""
+
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _json_load(value: str | None) -> object:
+    """兼容旧记录或空字段，避免查询接口因单条坏数据失败。"""
+
+    try:
+        return json.loads(value or "{}")
+    except json.JSONDecodeError:
+        return {}
+
+
 def list_runs(limit: int = 20, user_id: int | None = None, conversation_id: int | None = None) -> list[dict]:
     init_db()
     with connect() as conn:
@@ -518,6 +846,7 @@ def clear_runs(user_id: int | None = None, conversation_id: int | None = None) -
     init_db()
     with connect() as conn:
         clause, params = _scope_clause(user_id, conversation_id)
+        _delete_agent_episodes(conn, clause, params)
         cursor = conn.execute(f"DELETE FROM runs WHERE {clause}", params)
         return int(cursor.rowcount or 0)
 
@@ -539,6 +868,7 @@ def delete_conversation(conversation_id: int, user_id: int | None = None) -> boo
                 conn.execute(f"DELETE FROM {table} WHERE dataset_id IN ({placeholders})", dataset_ids)
             conn.execute(f"DELETE FROM datasets WHERE id IN ({placeholders})", dataset_ids)
         clause, params = _scope_clause(user_id, conversation_id)
+        _delete_agent_episodes(conn, clause, params)
         conn.execute(f"DELETE FROM runs WHERE {clause}", params)
         conn.execute(f"DELETE FROM uploaded_files WHERE {clause}", params)
         if user_id is None:
@@ -546,6 +876,18 @@ def delete_conversation(conversation_id: int, user_id: int | None = None) -> boo
         else:
             conn.execute("DELETE FROM conversations WHERE id = ? AND user_id = ?", (conversation_id, user_id))
         return True
+
+
+def _delete_agent_episodes(conn: sqlite3.Connection, clause: str, params: list) -> None:
+    """在清理对话或运行记录时同步移除对应训练轨迹。"""
+
+    rows = conn.execute(f"SELECT episode_id FROM agent_episodes WHERE {clause}", params).fetchall()
+    episode_ids = [str(row["episode_id"]) for row in rows]
+    if not episode_ids:
+        return
+    placeholders = ",".join("?" for _ in episode_ids)
+    conn.execute(f"DELETE FROM agent_steps WHERE episode_id IN ({placeholders})", episode_ids)
+    conn.execute(f"DELETE FROM agent_episodes WHERE episode_id IN ({placeholders})", episode_ids)
 
 
 def save_uploaded_files(

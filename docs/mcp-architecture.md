@@ -5,7 +5,7 @@
 ```mermaid
 flowchart TD
     A[Optimization Agent] --> LG[LangGraph Agent Policy]
-    LG --> L[Planner / Data / Modeler / Solver / Verifier / Explainer]
+    LG --> L[Planner / Data / Modeler / Solver / Verifier / Policy / Explainer]
     L --> C[MCP Client]
     O[FastAPI Ask Service / 本地规则路由] --> G[MCP Optimization Gateway]
     C --> D[Document MCP]
@@ -26,7 +26,7 @@ flowchart TD
     E --> O
 ```
 
-Agent policy 负责规划、建模语义和工具路由；当前 policy 由本地规则与可选 LLM 组成，后续将用可验证轨迹训练。数据字段校验与求解器调用是确定性代码，不由 LLM 临时生成。本地规则路由和 MCP Server 现在共用同一个 `MCP Optimization Gateway`，不再分别调用底层求解器。
+Agent policy 负责规划、建模语义和工具路由；当前 Verifier 后的 Recovery Policy 会在受约束动作集中选择接受、重试求解、重建模或终止，并保存候选动作与 action mask。数据字段校验与求解器调用仍是确定性代码，不由 LLM 临时生成。
 
 LangGraph 状态图和实时事件协议见 [Agent 工作流文档](agent-workflow.md)，策略学习的研究问题见 [研究方向文档](research-direction.md)。
 
@@ -67,8 +67,9 @@ LangGraph 状态图和实时事件协议见 [Agent 工作流文档](agent-workfl
 | Solver MCP | `solver_list_capabilities` | 返回已注册模板和求解器能力 |
 | Solver MCP | `solver_validate_problem` | 在求解边界再次校验合同 |
 | Solver MCP | `solver_solve_problem` | 路由到 Gurobi、精确算法或启发式求解器 |
+| Solver MCP | `solver_verify_solution` | 独立复算约束、目标值和结果一致性 |
 
-MCP Client 会给工具加上服务前缀，例如 `solver_solver_solve_problem`，避免外部服务出现同名工具时相互覆盖。
+MCP Client 会给工具加上服务前缀，例如 `solver_solver_solve_problem`，避免外部服务出现同名工具时相互覆盖。`solver_solve_problem` 的返回值也会自动附带同一验证报告，因此 Agent 可以选择原子化调用验证工具，也可以使用求解与验证一体化路径。
 
 ## 运行方式
 

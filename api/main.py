@@ -23,10 +23,13 @@ from api.database import (
     delete_conversation,
     ensure_conversation,
     get_active_dataset_id_or_none,
+    get_agent_episode,
     get_active_llm_config,
     get_conversation,
     get_user_by_token,
     init_db,
+    get_training_episode,
+    list_agent_episodes,
     list_conversations,
     list_datasets,
     list_uploaded_files,
@@ -138,6 +141,71 @@ def agent_graph():
     """返回前端和调试工具使用的 Agent 状态图定义。"""
 
     return agent_graph_manifest()
+
+
+@app.get("/api/agent/episodes")
+def agent_episodes(
+    conversation_id: int | None = None,
+    limit: int = 50,
+    x_session_token: str | None = Header(default=None),
+):
+    """列出当前用户的 Agent episode，支持按会话筛选。"""
+
+    user = get_user_by_token(x_session_token)
+    items = list_agent_episodes(
+        user_id=user["id"] if user else None,
+        conversation_id=conversation_id,
+        limit=limit,
+    )
+    return {"schema_version": "1.0", "episodes": items}
+
+
+@app.get("/api/agent/episodes/{episode_id}")
+def agent_episode_detail(
+    episode_id: str,
+    x_session_token: str | None = Header(default=None),
+):
+    """返回一次运行的完整 state/action/observation 轨迹。"""
+
+    user = get_user_by_token(x_session_token)
+    episode = get_agent_episode(episode_id, user_id=user["id"] if user else None)
+    if episode is None:
+        raise HTTPException(status_code=404, detail="Agent episode 不存在。")
+    return episode
+
+
+@app.get("/api/agent/episodes/{episode_id}/training")
+def agent_episode_training_view(
+    episode_id: str,
+    x_session_token: str | None = Header(default=None),
+):
+    """返回单个 episode 的标准 transition 训练视图。"""
+
+    user = get_user_by_token(x_session_token)
+    episode = get_training_episode(episode_id, user_id=user["id"] if user else None)
+    if episode is None:
+        raise HTTPException(status_code=404, detail="Agent episode 不存在。")
+    return episode
+
+
+@app.get("/api/agent/training-data")
+def agent_training_data(
+    conversation_id: int | None = None,
+    limit: int = 100,
+    x_session_token: str | None = Header(default=None),
+):
+    """批量导出离线 RL 与行为克隆使用的 episode 数据。"""
+
+    user = get_user_by_token(x_session_token)
+    user_id = user["id"] if user else None
+    summaries = list_agent_episodes(user_id=user_id, conversation_id=conversation_id, limit=limit)
+    episodes = [
+        item
+        for summary in summaries
+        if summary["status"] in {"completed", "failed"}
+        if (item := get_training_episode(summary["episode_id"], user_id=user_id)) is not None
+    ]
+    return {"schema_version": "1.0", "episodes": episodes}
 
 
 @app.post("/api/login")

@@ -78,7 +78,7 @@ $$
 
 ### 阶段 A：可观测基线
 
-先运行规则 policy 与 LLM planner，完整记录 $(s_t,a_t,o_t)$。当前六节点 LangGraph 和 `agent_step` 事件已经提供第一版轨迹骨架。
+先运行规则 policy 与 LLM planner，完整记录 $(s_t,a_t,o_t)$。当前七个职责节点、Verifier 后条件边和有界恢复回路已经提供可执行的 policy baseline。
 
 ### 阶段 B：Trajectory Dataset
 
@@ -134,19 +134,19 @@ $$
 
 | 研究组件 | 当前实现 | 下一步 |
 | --- | --- | --- |
-| Policy execution | LangGraph 六节点线性状态图 | 条件边、循环修复、动态终止 |
-| Environment | Document/Data/Solver MCP + Gateway | 工具故障注入与预算接口 |
-| State | `AgentWorkflowState` | 版本化可序列化 state snapshot |
-| Trajectory | `agent_graph.nodes` 与 SSE 事件 | episode/action/observation 独立数据表 |
-| Reward | 响应合同检查、求解状态、目标值 | 数学 Solution Verifier 与归一化 reward |
+| Policy execution | LangGraph 条件状态图、四动作 Recovery Policy、有界重试 | 参数化 policy、动作概率与动态预算 |
+| Environment | MCP + Gateway，以及可独立 `reset/step` 的 RL 微型环境 | 将故障注入从模拟转移接入真实 MCP/Solver |
+| State | `AgentWorkflowState`、尝试预算、Verifier 反馈与无密钥 snapshot | 环境特征、成本预算与动作历史编码 |
+| Trajectory | episode/step store、候选动作、mask、`next_state` 与 decision transitions | 数据集版本、质量筛选和批量文件导出 |
+| Reward | 六类数学 Solution Verifier、响应合同与确定性终局 reward | 加入成本、延迟与跨实例归一化 reward |
 | Baselines | 本地规则、可选 LLM planner | ReAct、BC、offline RL 统一接口 |
-| Evaluation | 模板与 API 回归测试 | benchmark runner、指标面板、消融实验 |
+| Evaluation | 72 任务分层 Recovery Benchmark、可复现 rollout 和回归测试 | 真实 OR 实例、指标面板和消融实验 |
 
 ## 9. 分阶段交付
 
 1. **Agent Runtime**：LangGraph 状态、真实节点事件、轨迹可视化与持久化。
-2. **Verifiable Environment**：独立复算约束、目标和最优性声明。
-3. **Trajectory Infrastructure**：episode store、失败分类、回放与数据导出。
+2. **Verifiable Environment**：独立复算约束和目标，并区分可行性验证与求解器最优性证明。
+3. **Trajectory Infrastructure**：episode store、失败分类、回放与 transition 数据导出。
 4. **Policy Baselines**：规则、LLM tool calling、ReAct 和 behavior cloning。
 5. **RL Experiment**：offline RL 或 contextual bandit，用于高层工具路由和恢复。
 6. **Research Evaluation**：跨任务基准、扰动测试、消融实验和可复现实验报告。

@@ -19,6 +19,7 @@ from optiagent.mcp_validation import validate_problem_data
 from optiagent.problem_spec import ProblemSpec
 from optiagent.solver import SolveResult, solve_facility_location
 from optiagent.solver_registry import get_generic_solver
+from optiagent.solution_verifier import verify_solution
 from optiagent.templates.registry import get_template
 
 
@@ -69,34 +70,34 @@ def solve_problem_envelope(problem: ProblemEnvelope, time_limit: int | None = No
     report = validate_problem_envelope(problem)
     template_id = problem.problem_spec.template_id
     if not report.valid:
-        return SolveEnvelope(
+        return _attach_solution_verification(problem, SolveEnvelope(
             template_id=template_id,
             status="INVALID_DATA",
             summary="数据校验未通过，未启动求解器。",
             warnings=[*report.errors, *report.warnings],
             validation=report,
             provenance=problem.sources,
-        )
+        ))
 
     try:
         if template_id == "facility_location":
-            return _solve_facility_envelope(problem, report, time_limit)
+            return _attach_solution_verification(problem, _solve_facility_envelope(problem, report, time_limit))
         adapter = get_generic_solver(template_id)
         if adapter is None:
-            return SolveEnvelope(
+            return _attach_solution_verification(problem, SolveEnvelope(
                 template_id=template_id,
                 status="UNSUPPORTED",
                 summary=f"未注册求解器：{template_id}",
                 validation=report,
                 provenance=problem.sources,
-            )
+            ))
         result = adapter.solve(
             problem.data,
             data_source=_source_label(problem),
             warnings=report.warnings,
             time_limit=time_limit,
         )
-        return SolveEnvelope(
+        return _attach_solution_verification(problem, SolveEnvelope(
             template_id=result.template_id,
             status=result.status,
             objective_value=result.objective_value,
@@ -108,15 +109,15 @@ def solve_problem_envelope(problem: ProblemEnvelope, time_limit: int | None = No
             warnings=result.warnings,
             validation=report,
             provenance=problem.sources,
-        )
+        ))
     except Exception as exc:
-        return SolveEnvelope(
+        return _attach_solution_verification(problem, SolveEnvelope(
             template_id=template_id,
             status="SOLVER_ERROR",
             summary=f"求解器执行失败：{type(exc).__name__}: {exc}",
             validation=report,
             provenance=problem.sources,
-        )
+        ))
 
 
 def solve_generic_via_gateway(
@@ -150,6 +151,7 @@ def solve_generic_via_gateway(
         summary=solved.summary,
         decisions=solved.decisions,
         metrics=solved.metrics,
+        solution_verification=solved.solution_verification.model_dump(mode="json") if solved.solution_verification else {},
         warnings=solved.warnings,
         data_source=data_source,
     )
@@ -255,7 +257,15 @@ def _facility_result_from_envelope(result: SolveEnvelope) -> SolveResult:
         model_type=str(metrics.get("model_type") or "MILP"),
         mip_gap=_optional_float(metrics.get("mip_gap")),
         optimality_proven=bool(metrics.get("optimality_proven", False)),
+        solution_verification=result.solution_verification.model_dump(mode="json") if result.solution_verification else None,
     )
+
+
+def _attach_solution_verification(problem: ProblemEnvelope, result: SolveEnvelope) -> SolveEnvelope:
+    """在统一 Gateway 边界附加独立验证，所有传输方式共享同一结果。"""
+
+    verification = verify_solution(problem, result)
+    return result.model_copy(update={"solution_verification": verification})
 
 
 def _frame_records(frame: pd.DataFrame) -> list[dict[str, Any]]:

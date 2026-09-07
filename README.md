@@ -72,13 +72,13 @@ $$
 
 ![通用运筹优化 Agent 技术架构图](assets/architecture.png)
 
-当前执行层使用 LangGraph 编排 `Planner → Data Agent → Modeler → Solver → Verifier → Explainer`，MCP 层拆分为 Document / Data / Solver 三个可独立运行的服务，通过版本化的 `ProblemEnvelope` 与 `SolveEnvelope` 交换结构化数据。详细设计见 [Agent 工作流](docs/agent-workflow.md) 与 [MCP 架构文档](docs/mcp-architecture.md)。
+当前执行层使用 LangGraph 编排 `Planner → Data Agent → Modeler → Solver → Verifier → Policy → Explainer`，Policy 可根据验证反馈返回 Modeler/Solver；MCP 层拆分为 Document / Data / Solver 三个可独立运行的服务。详细设计见 [Agent 工作流](docs/agent-workflow.md) 与 [MCP 架构文档](docs/mcp-architecture.md)。
 
 ## 研究目标
 
 OptiAgent 将优化建模与求解形式化为一个序列决策问题。策略 $\pi_\theta(a_t\mid s_t)$ 根据当前问题、数据画像、建模草案、工具历史和验证反馈选择下一步动作；求解器与验证器提供可执行、可复算的环境反馈。项目计划以规则/LLM 轨迹为起点，逐步加入轨迹数据集、可验证奖励、模仿学习、离线 RL 和在线策略评估。
 
-当前阶段的边界很明确：已经具备可观测的状态图与 MCP 环境，但尚未宣称已训练出 RL policy。第一周交付的是后续采集 trajectory 与计算 reward 的基础设施。
+当前阶段的边界很明确：系统已经具备可观测状态图、MCP 环境、数学验证器、确定性 reward 和版本化 trajectory store，但尚未宣称已训练出 RL policy。研究设计见 [研究方向文档](docs/research-direction.md)，轨迹合同见 [Trajectory 数据文档](docs/trajectory-data.md)。
 
 ## 当前能力
 
@@ -87,7 +87,9 @@ OptiAgent 将优化建模与求解形式化为一个序列决策问题。策略 
 - 将自然语言问题转换为 `ProblemSpec`
 - 输出目标函数、变量、约束、数据要求和推荐求解器
 - 支持 LLM 路由与本地规则路由双模式
-- 通过 LangGraph 保存六个 Agent 节点的状态与执行轨迹
+- 通过 LangGraph 保存七个职责节点及有界恢复回路的执行轨迹
+- 记录 Policy 候选动作、action mask、实际动作和恢复原因
+- 将每次运行记录为版本化 episode，并提供离线 RL/行为克隆 transition 导出
 
 ### 2. RAG 知识增强
 
@@ -103,6 +105,7 @@ OptiAgent 将优化建模与求解形式化为一个序列决策问题。策略 
 
 - 根据问题模板自动调用对应求解工具
 - 对求解结果做最优性/可行性标记
+- 对六类模板独立复算约束和目标值，并生成可审计的确定性 reward
 - 对真实数据类问题支持 Web Research 证据检索
 - 内置 Document MCP、Data MCP 和 Solver MCP，并支持外部 MCP 服务接入
 - MCP 服务部分故障时可按服务降级，不会因单个连接失败丢失全部工具
@@ -151,6 +154,17 @@ OptiAgent 将优化建模与求解形式化为一个序列决策问题。策略 
 - 后端会推送 `status`、`agent_step`、`answer_delta` 和 `final`：用户可以实时看到六个节点的开始、完成或失败状态，最终再渲染完整结构化卡片、决策表和 Agent 轨迹。
 - `/api/ask` 保留为非流式兼容接口。
 
+### Trajectory 与训练数据
+
+- `GET /api/agent/episodes`：列出 episode 摘要。
+- `GET /api/agent/episodes/{episode_id}`：读取完整审计轨迹。
+- `GET /api/agent/episodes/{episode_id}/training`：导出单个 transition 序列。
+- `GET /api/agent/training-data`：批量导出完成或失败的训练 episode。
+- `OptimizationAgentEnv`：独立于 Web API 的 `reset/step` 恢复策略环境。
+- `scripts/generate_rl_dataset.py`：生成可复现 JSONL rollout 数据。
+
+环境定义、动作编号、奖励和 benchmark 指标见 [RL Environment 文档](docs/rl-environment.md)。
+
 ## 系统如何工作
 
 ```text
@@ -161,6 +175,7 @@ OptiAgent 将优化建模与求解形式化为一个序列决策问题。策略 
      -> Modeler
      -> Solver -> MCP Gateway -> Document / Data / Solver MCP
      -> Verifier
+     -> Policy -> accept / retry solver / rebuild model / terminate
      -> Explainer
   -> 轨迹与结构化结果持久化
 ```
@@ -199,7 +214,7 @@ OptiAgent 将优化建模与求解形式化为一个序列决策问题。策略 
 
 这些工具主要定义在 [optiagent/langchain_agents.py](optiagent/langchain_agents.py) 中，负责连接自然语言理解、知识检索、数据分析与求解执行。
 
-内置 MCP 另外暴露 10 个可发现工具，覆盖文档读取、知识检索、数据画像、问题数据构建、数据校验、求解器能力发现和统一求解。
+内置 MCP 另外暴露 11 个可发现工具，覆盖文档读取、知识检索、数据画像、问题数据构建、数据校验、求解器能力发现、统一求解和独立解验证。
 
 ## 快速开始
 
@@ -272,12 +287,13 @@ http://127.0.0.1:8000
 api/
   main.py                  FastAPI 路由、上传、配置入口
   database.py              SQLite 持久化
-  services/agent_workflow.py  LangGraph 六节点状态图与运行事件
+  services/agent_workflow.py  LangGraph 条件状态图、恢复回路与运行事件
   services/ask_service.py  提问编排、RAG、数据解析、工具调用响应
 
 optiagent/
   mcp_contracts.py         ProblemEnvelope / SolveEnvelope 版本化合同
   mcp_validation.py        Data / Solver MCP 共享的确定性数据校验
+  solution_verifier.py     六类模板的约束与目标值独立复算
   mcp_client.py            内置与外部 MCP 发现、前缀和降级
   optimization_gateway.py  本地与 MCP 共用的唯一合同化求解入口
   mcp_servers/             Document / Data / Solver MCP 服务
@@ -441,6 +457,12 @@ MCP 配置留空时，启用 LLM 的 Agent 会使用当前 Python 环境自动�
 python3 -m unittest discover -s tests
 python3 -m compileall api optiagent
 node --check web/app.js
+```
+
+## 生成 RL baseline 轨迹
+
+```bash
+PYTHONPATH=. python scripts/generate_rl_dataset.py --output data/rl/baseline.jsonl
 ```
 
 ## Roadmap

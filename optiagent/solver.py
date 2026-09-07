@@ -22,6 +22,7 @@ class SolveResult:
     model_type: str
     mip_gap: float | None = None
     optimality_proven: bool = False
+    solution_verification: dict | None = None
 
 
 def solve_facility_location(data: SupplyChainData, time_limit: int | None = None) -> SolveResult:

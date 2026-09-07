@@ -42,9 +42,12 @@ Architecture:
 - Local markdown-based RAG over optimization knowledge
 - CSV upload, schema inference, normalization, and validation
 - Structured execution for optimization templates
+- Independent constraint/objective verification with deterministic reward signals
 - Built-in Document, Data, and Solver MCP servers with versioned problem/result contracts
-- A LangGraph workflow with Planner, Data Agent, Modeler, Solver, Verifier, and Explainer nodes
+- A conditional LangGraph workflow with Planner, Data Agent, Modeler, Solver, Verifier, Policy, and Explainer nodes
+- A typed recovery policy with candidate actions, action masks, and bounded modeling/solver retries
 - Live `agent_step` events and streaming answer output through `/api/ask/stream`
+- Versioned episode/step storage with state-action-observation and offline-training exports
 - Session-isolated file handling and SQLite persistence
 
 ## Supported Executable Templates
@@ -65,7 +68,8 @@ User question / uploaded data
   -> LangGraph Agent Policy
      -> Planner -> Data Agent -> Modeler
      -> Solver -> MCP Gateway -> Document / Data / Solver MCP
-     -> Verifier -> Explainer
+     -> Verifier -> Policy -> accept / retry / rebuild / terminate
+     -> Explainer
   -> Persisted trajectory and structured result
 ```
 
@@ -78,6 +82,8 @@ User question / uploaded data
 - [docs/mcp-architecture.md](docs/mcp-architecture.md): MCP contracts, tools, configuration, and security boundaries
 - [docs/agent-workflow.md](docs/agent-workflow.md): observable LangGraph execution and SSE event contract
 - [docs/research-direction.md](docs/research-direction.md): research question, policy formulation, reward design, and experimental roadmap
+- [docs/trajectory-data.md](docs/trajectory-data.md): episode schema, lifecycle, and training export contract
+- [docs/rl-environment.md](docs/rl-environment.md): action space, rewards, fault scenarios, and reproducible rollouts
 
 ## Quick Start
 

@@ -20,7 +20,8 @@ const agentNodeBlueprint = [
   { node_id: "modeler", label: "Modeler", description: "生成结构化问题定义", sequence: 3 },
   { node_id: "solver", label: "Solver", description: "通过 MCP Gateway 执行求解", sequence: 4 },
   { node_id: "verifier", label: "Verifier", description: "检查响应合同与求解状态", sequence: 5 },
-  { node_id: "explainer", label: "Explainer", description: "组织业务结论与可审计轨迹", sequence: 6 },
+  { node_id: "policy", label: "Policy", description: "根据验证反馈选择接受、恢复或终止", sequence: 6 },
+  { node_id: "explainer", label: "Explainer", description: "组织业务结论与可审计轨迹", sequence: 7 },
 ];
 
 const state = {
@@ -1025,7 +1026,9 @@ function appendAssistantMessage(result) {
 }
 
 function buildAgentGraphHtml(nodes, live = false) {
-  const normalized = [...nodes].sort((left, right) => Number(left.sequence || 0) - Number(right.sequence || 0));
+  // 实时轨道保持固定职责顺序，历史结果则按真实 transition 顺序展示重试。
+  const orderOf = (node) => live ? node.sequence : (node.transition_sequence || node.sequence);
+  const normalized = [...nodes].sort((left, right) => Number(orderOf(left) || 0) - Number(orderOf(right) || 0));
   const stateLabels = {
     pending: "等待",
     running: "运行中",
@@ -1041,7 +1044,7 @@ function buildAgentGraphHtml(nodes, live = false) {
           <div class="agent-node ${escapeHtml(nodeStatus)}" role="listitem">
             <div class="agent-node-marker"><span></span></div>
             <div class="agent-node-copy">
-              <div><strong>${escapeHtml(node.label || node.node_id)}</strong><em>${escapeHtml(stateLabels[nodeStatus] || nodeStatus)}</em></div>
+              <div><strong>${escapeHtml(node.label || node.node_id)}${Number(node.attempt || 1) > 1 ? ` #${escapeHtml(node.attempt)}` : ""}</strong><em>${escapeHtml(stateLabels[nodeStatus] || nodeStatus)}</em></div>
               <small>${escapeHtml(node.detail || node.description || "等待上游节点")}</small>
               ${elapsed ? `<time>${escapeHtml(elapsed)}</time>` : ""}
             </div>
