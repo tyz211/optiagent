@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>OptiAgent</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260906-agent-graph" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260909-dialogue-agent" />
   </head>
   <body>
     <main class="app-shell">
@@ -48,7 +48,7 @@
         <header class="chat-header">
           <div class="title-group">
             <h1>OptiAgent</h1>
-            <span>用自然语言完成运筹优化问题的求解</span>
+            <span>通过多轮对话分析需求、建模、求解与验证</span>
           </div>
           <div class="top-actions">
             <button data-panel="uploadPanel">数据</button>
@@ -109,15 +109,15 @@
 
         <section id="emptyState" class="chat-empty hidden">
           <div class="empty-orb">OR</div>
-          <h2>先上传 CSV，再开始分析</h2>
-          <p>我会读取你上传的文件内容，并根据你的问题选择解释、建模或求解。</p>
+          <h2>先描述你的业务目标</h2>
+          <p>我会通过多轮对话整理目标、约束和数据缺口，必要时再请你上传文件。</p>
         </section>
 
         <section id="chatStream" class="chat-stream">
           <article class="message assistant-message">
             <div class="avatar">OA</div>
           <div class="message-body">
-              <p>你好，上传 CSV 后我会先读取文件内容，再根据你的问题进行建模、分析或求解。</p>
+              <p>你好，你可以先描述业务目标。我会通过多轮对话整理目标、约束和数据缺口，信息足够后再建模求解。</p>
               <div class="suggestion-row">
                 <button class="suggestion">分析当前供应链数据</button>
                 <button class="suggestion">求解一个背包问题</button>
@@ -127,27 +127,9 @@
           </article>
         </section>
 
-        <section id="answerPanel" class="result-cache hidden" aria-hidden="true">
-          <div id="structuredBox" class="structured"></div>
-          <div id="answerBox" class="answer">等待提问。</div>
-        </section>
-        <section id="modelingPanel" class="result-cache hidden" aria-hidden="true">
-          <div id="problemSpecBox" class="spec-box"></div>
-        </section>
-        <section id="metricGrid" class="metric-grid hidden" aria-hidden="true">
-          <div><span>总成本</span><strong id="objectiveMetric">-</strong></div>
-          <div><span>运输成本</span><strong id="transportMetric">-</strong></div>
-          <div><span>固定成本</span><strong id="fixedMetric">-</strong></div>
-          <div><span>状态</span><strong id="statusMetric">-</strong></div>
-        </section>
-        <section id="recommendPanel" class="result-cache hidden" aria-hidden="true">
-          <h2 id="resultTableTitle">推荐启用仓库</h2>
-          <div id="warehouseTable" class="table-wrap"></div>
-        </section>
-
         <section id="askPanel" class="composer-wrap">
           <div class="composer">
-            <textarea id="questionInput" rows="2" placeholder="输入你的优化问题，例如：请分析当前供应链数据，并给出推荐启用仓库和主要风险。"></textarea>
+            <textarea id="questionInput" rows="2" placeholder="先描述你的业务需求，例如：我想降低配送成本，但还不确定应该如何建模。"></textarea>
             <div class="composer-actions">
               <button data-panel="uploadPanel" class="icon-button">+</button>
               <button data-panel="llmPanel">模型 <span id="llmState">未配置</span></button>

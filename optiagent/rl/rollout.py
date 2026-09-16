@@ -3,15 +3,30 @@ from __future__ import annotations
 from collections.abc import Callable
 import json
 from pathlib import Path
+import random
 from statistics import mean
 from typing import Any
 
 from optiagent.agent_policy import PolicyAction, decide_after_verification
 from optiagent.rl.benchmark import BenchmarkTask
-from optiagent.rl.environment import OptimizationAgentEnv
+from optiagent.rl.environment import ACTION_IDS, OptimizationAgentEnv
 
 
 Policy = Callable[[dict[str, Any]], PolicyAction]
+
+
+class RandomValidPolicy:
+    """仅在 action mask 允许的动作中均匀采样，作为随机对照基线。"""
+
+    def __init__(self, seed: int = 42) -> None:
+        self._randomizer = random.Random(seed)
+
+    def __call__(self, observation: dict[str, Any]) -> PolicyAction:
+        mask = list(observation.get("action_mask") or [])
+        valid = [action_id for action_id, enabled in zip(ACTION_IDS, mask, strict=False) if enabled]
+        if not valid:
+            raise ValueError("当前状态没有合法动作。")
+        return self._randomizer.choice(valid)
 
 
 def recovery_baseline_policy(observation: dict[str, Any]) -> PolicyAction:

@@ -168,6 +168,14 @@ def init_db() -> None:
                 UNIQUE(episode_id, node_id, attempt)
             );
 
+            CREATE TABLE IF NOT EXISTS conversation_requirements (
+                conversation_id INTEGER PRIMARY KEY,
+                user_id INTEGER,
+                state_json TEXT NOT NULL DEFAULT '{}',
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_agent_episodes_scope
             ON agent_episodes(user_id, conversation_id, started_at);
 
@@ -328,6 +336,52 @@ def touch_conversation(conversation_id: int | None, title: str | None = None) ->
                 )
                 return
         conn.execute("UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (conversation_id,))
+
+
+def get_conversation_requirement(
+    conversation_id: int | None,
+    user_id: int | None = None,
+) -> dict | None:
+    """读取当前会话累计的需求摘要，并保持用户作用域隔离。"""
+
+    if conversation_id is None or get_conversation(conversation_id, user_id=user_id) is None:
+        return None
+    with connect() as conn:
+        if user_id is None:
+            row = conn.execute(
+                "SELECT state_json FROM conversation_requirements WHERE conversation_id = ? AND user_id IS NULL",
+                (conversation_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT state_json FROM conversation_requirements WHERE conversation_id = ? AND user_id = ?",
+                (conversation_id, user_id),
+            ).fetchone()
+    payload = _json_load(row["state_json"]) if row else None
+    return payload if isinstance(payload, dict) else None
+
+
+def save_conversation_requirement(
+    conversation_id: int | None,
+    state: dict,
+    user_id: int | None = None,
+) -> None:
+    """原子更新多轮需求状态；无会话的离线图测试不写入数据库。"""
+
+    if conversation_id is None or get_conversation(conversation_id, user_id=user_id) is None:
+        return
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO conversation_requirements (conversation_id, user_id, state_json)
+            VALUES (?, ?, ?)
+            ON CONFLICT(conversation_id) DO UPDATE SET
+                user_id = excluded.user_id,
+                state_json = excluded.state_json,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (conversation_id, user_id, _json_dump(state)),
+        )
 
 
 def save_dataset(
@@ -532,11 +586,12 @@ def update_run_result(run_id: int, result: dict) -> None:
         conn.execute(
             """
             UPDATE runs
-            SET answer = ?, objective_value = ?, transport_cost = ?, fixed_cost = ?,
+            SET question = ?, answer = ?, objective_value = ?, transport_cost = ?, fixed_cost = ?,
                 status = ?, open_warehouses = ?, result_json = ?
             WHERE id = ?
             """,
             (
+                result.get("question", ""),
                 result.get("answer", ""),
                 result.get("objective_value"),
                 result.get("transport_cost"),
@@ -847,6 +902,7 @@ def clear_runs(user_id: int | None = None, conversation_id: int | None = None) -
     with connect() as conn:
         clause, params = _scope_clause(user_id, conversation_id)
         _delete_agent_episodes(conn, clause, params)
+        conn.execute(f"DELETE FROM conversation_requirements WHERE {clause}", params)
         cursor = conn.execute(f"DELETE FROM runs WHERE {clause}", params)
         return int(cursor.rowcount or 0)
 
@@ -869,6 +925,7 @@ def delete_conversation(conversation_id: int, user_id: int | None = None) -> boo
             conn.execute(f"DELETE FROM datasets WHERE id IN ({placeholders})", dataset_ids)
         clause, params = _scope_clause(user_id, conversation_id)
         _delete_agent_episodes(conn, clause, params)
+        conn.execute(f"DELETE FROM conversation_requirements WHERE {clause}", params)
         conn.execute(f"DELETE FROM runs WHERE {clause}", params)
         conn.execute(f"DELETE FROM uploaded_files WHERE {clause}", params)
         if user_id is None:

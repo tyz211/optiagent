@@ -5,7 +5,6 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import api.database as database
@@ -114,7 +113,7 @@ class AgentWorkflowTests(unittest.TestCase):
         )
 
         self.assertEqual("OPTIMAL", result["status"])
-        planner = result["agent_graph"]["nodes"][0]
+        planner = next(node for node in result["agent_graph"]["nodes"] if node["node_id"] == "planner")
         self.assertIn("knapsack", planner["detail"])
         self.assertIn("执行优化", planner["detail"])
 
@@ -137,33 +136,71 @@ class AgentWorkflowTests(unittest.TestCase):
         )
         self.assertLess(unsolved_reward["total"], 0)
 
-    def test_failed_workflow_persists_replayable_episode(self) -> None:
-        """节点异常也必须留下失败 step 和 episode，而不是丢失负样本。"""
+    def test_incomplete_requirement_is_clarified_without_calling_solver(self) -> None:
+        """信息不足时应主动追问，而不是把可预防的缺数据当成执行异常。"""
 
-        with self.assertRaises(HTTPException):
-            run_agent_workflow(
-                question="请分析并解决这个优化问题",
-                requested_dataset_id=None,
-                mcp_config="",
-                user_id=None,
-                conversation_id=None,
-            )
+        result = run_agent_workflow(
+            question="请分析并解决这个优化问题",
+            requested_dataset_id=None,
+            mcp_config="",
+            user_id=None,
+            conversation_id=None,
+        )
 
         summaries = list_agent_episodes(user_id=None)
         self.assertEqual(1, len(summaries))
         episode = get_agent_episode(summaries[0]["episode_id"], user_id=None)
-        self.assertEqual("failed", episode["status"])
-        self.assertEqual("facility_location", episode["template_id"])
-        self.assertEqual(-1.0, episode["total_reward"])
-        self.assertIn("HTTPException", episode["error"])
-        self.assertEqual("solver", episode["steps"][-1]["node_id"])
-        self.assertEqual("failed", episode["steps"][-1]["status"])
-        self.assertEqual(-1.0, episode["steps"][-1]["reward"]["total"])
-        self.assertTrue(episode["steps"][-1]["observation"]["message"])
+        self.assertEqual("NEEDS_CLARIFICATION", result["status"])
+        self.assertEqual("needs_clarification", result["requirement_analysis"]["readiness"])
+        self.assertEqual(["requirements", "explainer"], [item["node_id"] for item in episode["steps"]])
+        self.assertEqual("completed", episode["status"])
+        self.assertEqual(0.0, episode["total_reward"])
+        self.assertIsNone(episode["error"])
         training = get_training_episode(episode["episode_id"], user_id=None)
-        self.assertEqual("facility_location", training["task"]["template_id"])
-        self.assertEqual(-1.0, training["transitions"][-1]["reward"])
+        self.assertEqual(0.0, training["transitions"][-1]["reward"])
         self.assertTrue(training["transitions"][-1]["done"])
+
+    def test_two_turn_conversation_merges_requirement_and_then_solves(self) -> None:
+        """第一轮追问后，第二轮应继承目标与约束，只补数据即可进入求解。"""
+
+        with TestClient(app) as client:
+            conversation = client.post("/api/conversations", json={"title": "多轮需求测试"}).json()["conversation"]
+            conversation_id = conversation["id"]
+            first = client.post(
+                "/api/ask",
+                json={
+                    "conversation_id": conversation_id,
+                    "question": "我想解决背包选择问题，目标是最大化总价值，总重量不能超过容量。",
+                },
+            )
+            second_question = "数据如下：\n" + json.dumps(
+                {
+                    "capacity": 5,
+                    "items": [
+                        {"item": "A", "value": 8, "weight": 3},
+                        {"item": "B", "value": 5, "weight": 2},
+                    ],
+                },
+                ensure_ascii=False,
+            )
+            second = client.post(
+                "/api/ask",
+                json={"conversation_id": conversation_id, "question": second_question},
+            )
+            requirement = client.get(f"/api/conversations/{conversation_id}/requirements")
+
+        self.assertEqual(200, first.status_code)
+        self.assertEqual("NEEDS_CLARIFICATION", first.json()["status"])
+        self.assertNotIn("solver", [item["node_id"] for item in first.json()["agent_graph"]["nodes"]])
+        self.assertEqual(200, second.status_code)
+        self.assertEqual("OPTIMAL", second.json()["status"])
+        self.assertEqual(2, second.json()["requirement_analysis"]["turn_count"])
+        self.assertEqual("ready_to_solve", second.json()["requirement_analysis"]["readiness"])
+        self.assertIn("总重量不能超过容量", second.json()["requirement_analysis"]["constraints"])
+        self.assertEqual("ready_to_solve", requirement.json()["requirement_analysis"]["readiness"])
+        persisted_runs = list_runs(limit=10, user_id=None, conversation_id=conversation_id)
+        self.assertEqual(2, len(persisted_runs))
+        self.assertEqual(second_question, persisted_runs[-1]["question"])
 
     def test_trajectory_query_and_training_export_api(self) -> None:
         """验证审计详情与批量训练数据可以通过只读 API 获取。"""

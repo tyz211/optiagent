@@ -87,4 +87,4 @@ PYTHONPATH=. python scripts/generate_rl_dataset.py \
 
 ## 研究边界
 
-当前 benchmark 是高层恢复策略的可控微型环境，故障转移是确定性注入，尚未真正调用 MCP 和求解器。它用于验证状态/动作/奖励合同和训练代码，不能代替最终的端到端 OR benchmark。下一版需将故障注入 MCP transport、数据映射和真实 Solver 执行层。
+`OptimizationAgentEnv` 是高层恢复策略的可控微型环境，其故障转移仍是确定性注入。项目另外提供 [E2E Benchmark](e2e-test-plan.md)，并新增 `MCPTransportRecoveryEnv`：它通过真实 MCP stdio 进程和 ClientSession 采集正常、超时、断连与非法结构返回，再将这些观测组合为 90 个训练/验证/测试任务。当前尚未覆盖远程 Streamable HTTP 网络抖动、生产 LLM 错误和端到端 LangGraph 在线决策。

@@ -116,6 +116,28 @@ Policy 节点使用 `accept_solution`、`retry_solver`、`rebuild_model` 和 `te
 
 完整 `transitions` 保留所有环境节点。`decision_transitions` 只保留真正存在候选动作的 Policy 决策，并把终局 reward 归到最后一个决策上，可直接用于行为克隆和离线 RL。
 
+## 未来的模型后训练视图
+
+当前 transition 主要服务高层 Agent policy。为了支持云端开源模型的 SFT 与 GRPO，后续需要从同一 episode 生成第二种 model rollout view：
+
+```json
+{
+  "task_id": "stable-task-id",
+  "dataset_version": "dataset-version",
+  "agent_policy_version": "agent-policy-version",
+  "model_version": "base-or-checkpoint-version",
+  "messages": [],
+  "generated_output": {},
+  "tool_observations": [],
+  "verifier_report": {},
+  "reward": 0.0,
+  "reward_components": {},
+  "human_correction": null
+}
+```
+
+SFT 视图只保留经过 Schema、Solver、Verifier 或人工确认的高质量目标输出；GRPO 视图需要保留同一 prompt 的多个候选及其可复算奖励。原始 API Key、授权头和其他运行时密钥不得进入任一训练视图。
+
 ## 生命周期
 
 ```text

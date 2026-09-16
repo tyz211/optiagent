@@ -3,7 +3,6 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from io import StringIO
 import json
-import math
 from pathlib import Path
 from queue import Empty, Queue
 import time
@@ -26,6 +25,7 @@ from api.database import (
     get_agent_episode,
     get_active_llm_config,
     get_conversation,
+    get_conversation_requirement,
     get_user_by_token,
     init_db,
     get_training_episode,
@@ -43,8 +43,9 @@ from api.database import (
 )
 from api.services.agent_workflow import agent_graph_manifest, run_agent_workflow
 from optiagent.data import SupplyChainData, normalize_data, validate_data
-from optiagent.llm import DataProfile, LLMConfig
+from optiagent.llm import DataProfile
 from optiagent.mcp_client import builtin_mcp_config
+from optiagent.mcp_servers.common import json_safe
 from optiagent.schema_mapping import assemble_facility_data, apply_table_mapping, infer_facility_table, mapping_summary
 
 
@@ -233,6 +234,24 @@ def new_conversation(request: ConversationRequest, x_session_token: str | None =
     user = get_user_by_token(x_session_token)
     conversation = create_conversation(request.title, user_id=user["id"] if user else None)
     return {"conversation": conversation}
+
+
+@app.get("/api/conversations/{conversation_id}/requirements")
+def conversation_requirements(
+    conversation_id: int,
+    x_session_token: str | None = Header(default=None),
+):
+    """返回当前会话累计需求，供前端恢复多轮需求面板。"""
+
+    user = get_user_by_token(x_session_token)
+    uid = user["id"] if user else None
+    if get_conversation(conversation_id, user_id=uid) is None:
+        raise HTTPException(status_code=404, detail="对话不存在或无权访问。")
+    return {
+        "schema_version": "1.0",
+        "conversation_id": conversation_id,
+        "requirement_analysis": get_conversation_requirement(conversation_id, user_id=uid),
+    }
 
 
 @app.get("/api/datasets")
@@ -518,20 +537,8 @@ def ask_stream(request: AskRequest, x_session_token: str | None = Header(default
 
 
 def _sse(event: str, payload: dict) -> str:
-    data = json.dumps(_json_safe(jsonable_encoder(payload)), ensure_ascii=False, allow_nan=False)
+    data = json.dumps(json_safe(jsonable_encoder(payload)), ensure_ascii=False, allow_nan=False)
     return f"event: {event}\ndata: {data}\n\n"
-
-
-def _json_safe(value):
-    if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_json_safe(item) for item in value]
-    if isinstance(value, tuple):
-        return [_json_safe(item) for item in value]
-    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
-        return None
-    return value
 
 
 def _stream_answer_text(result: dict) -> list[str]:
@@ -740,19 +747,6 @@ def _role_label(role: str | None) -> str:
         "job_shop_scheduling": "作业车间调度数据",
         "production_mix": "产品组合数据",
     }.get(role or "", "通用数据")
-
-
-def _active_llm_config(user_id: int | None) -> LLMConfig | None:
-    config = get_active_llm_config(user_id)
-    if not config:
-        return None
-    return LLMConfig(
-        enabled=True,
-        api_key=config["api_key"],
-        base_url=config["base_url"],
-        model=config["model"],
-        temperature=float(config["temperature"]),
-    )
 
 
 def _check_dataset(data: SupplyChainData) -> dict:

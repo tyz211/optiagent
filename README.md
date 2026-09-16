@@ -72,24 +72,31 @@ $$
 
 ![通用运筹优化 Agent 技术架构图](assets/architecture.png)
 
-当前执行层使用 LangGraph 编排 `Planner → Data Agent → Modeler → Solver → Verifier → Policy → Explainer`，Policy 可根据验证反馈返回 Modeler/Solver；MCP 层拆分为 Document / Data / Solver 三个可独立运行的服务。详细设计见 [Agent 工作流](docs/agent-workflow.md) 与 [MCP 架构文档](docs/mcp-architecture.md)。
+当前执行层使用 LangGraph 编排 `Requirement Analyst → Planner → Data Agent → Modeler → Solver → Verifier → Policy → Explainer`。Requirement Analyst 会跨轮累积目标、约束、数据和未决问题；Policy 可根据验证反馈返回 Modeler/Solver；MCP 层拆分为 Document / Data / Solver 三个可独立运行的服务。详细设计见 [Agent 工作流](docs/agent-workflow.md)、[MCP 架构文档](docs/mcp-architecture.md) 与 [多轮 Agent 路线](docs/multi-turn-agent-roadmap.md)。
 
 ## 研究目标
 
-OptiAgent 将优化建模与求解形式化为一个序列决策问题。策略 $\pi_\theta(a_t\mid s_t)$ 根据当前问题、数据画像、建模草案、工具历史和验证反馈选择下一步动作；求解器与验证器提供可执行、可复算的环境反馈。项目计划以规则/LLM 轨迹为起点，逐步加入轨迹数据集、可验证奖励、模仿学习、离线 RL 和在线策略评估。
+OptiAgent 的长期方向由两条相互闭环的主线组成：第一部分是当前正在开发的 Agent System，学习规划、MCP 工具路由、求解控制和失败恢复；第二部分是在云端部署开源语言模型，并使用 SFT + GRPO 后训练其运筹建模、结构化工具调用和反馈修复能力。Solver 与 Verifier 为两条主线提供统一、可执行且可复算的环境反馈。
 
-当前阶段的边界很明确：系统已经具备可观测状态图、MCP 环境、数学验证器、确定性 reward 和版本化 trajectory store，但尚未宣称已训练出 RL policy。研究设计见 [研究方向文档](docs/research-direction.md)，轨迹合同见 [Trajectory 数据文档](docs/trajectory-data.md)。
+两部分的训练对象不同：当前 BC + Masked Double DQN 学习结构化状态上的高层 Agent 动作；未来 GRPO 学习的是开源语言模型的 token/结构化输出策略。项目早期将交替固定其中一侧进行训练，避免 Agent 与模型同时更新造成非平稳训练。
+
+当前已在可控 Recovery Benchmark 上训练出第一个 BC + Masked Double DQN policy，并逐步扩展到六类真实 Gateway/Solver/Verifier 结果和真实 MCP stdio 故障轨迹。最新 40 维 transport-aware 策略能够区分正常返回、超时、子进程断连和非法结构返回，在独立 test split 上恢复全部可恢复任务且非法动作率为 0。它尚未接管生产 LangGraph，也不代表已学会通用优化建模；更准确的定位是“已打通真实工具故障采集与策略学习闭环的可验证 Optimization Agent 原型”。
+
+完整的双主线架构、数据闭环、训练边界与里程碑见 [双主线总体路线](docs/two-track-roadmap.md)。
 
 ## 当前能力
 
 ### 1. 问题理解与建模
 
 - 将自然语言问题转换为 `ProblemSpec`
+- 在求解前将多轮对话合并为结构化 `RequirementBrief`，记录已确认事实、假设和待澄清项
+- 当问题类型、目标、约束或数据不完整时主动追问，并阻止误调 Solver
 - 输出目标函数、变量、约束、数据要求和推荐求解器
 - 支持 LLM 路由与本地规则路由双模式
-- 通过 LangGraph 保存七个职责节点及有界恢复回路的执行轨迹
+- 通过 LangGraph 保存八个职责节点及需求澄清、有界恢复回路的执行轨迹
 - 记录 Policy 候选动作、action mask、实际动作和恢复原因
 - 将每次运行记录为版本化 episode，并提供离线 RL/行为克隆 transition 导出
+- 通过六类真实求解实例测试 Gateway、Solver、Schema Validation 和 SolutionVerifier
 
 ### 2. RAG 知识增强
 
@@ -114,7 +121,7 @@ OptiAgent 将优化建模与求解形式化为一个序列决策问题。策略 
 
 - 支持 CSV 上传、完整内容保存和预览
 - 支持按会话隔离上传文件、结构化数据集与运行记录
-- 支持多轮追问，不同问题文件不会相互污染
+- 支持按会话持久化多轮需求状态，补充信息后可继承上一轮目标和约束
 
 ### 5. 结果展示
 
@@ -151,7 +158,7 @@ OptiAgent 将优化建模与求解形式化为一个序列决策问题。策略 
 ### 流式输出
 
 - 前端默认调用 `/api/ask/stream`，通过 `fetch + ReadableStream` 接收 SSE 事件。
-- 后端会推送 `status`、`agent_step`、`answer_delta` 和 `final`：用户可以实时看到六个节点的开始、完成或失败状态，最终再渲染完整结构化卡片、决策表和 Agent 轨迹。
+- 后端会推送 `status`、`agent_step`、`answer_delta` 和 `final`：用户可以实时看到八个职责节点的开始、完成或失败状态，最终再渲染完整结构化卡片、决策表和 Agent 轨迹。
 - `/api/ask` 保留为非流式兼容接口。
 
 ### Trajectory 与训练数据
@@ -164,12 +171,15 @@ OptiAgent 将优化建模与求解形式化为一个序列决策问题。策略 
 - `scripts/generate_rl_dataset.py`：生成可复现 JSONL rollout 数据。
 
 环境定义、动作编号、奖励和 benchmark 指标见 [RL Environment 文档](docs/rl-environment.md)。
+真实求解链路的故障矩阵与扩展计划见 [E2E Benchmark 测试计划](docs/e2e-test-plan.md)。
+可学习策略的算法选择、状态编码、损失函数和首轮结果见 [Learnable Policy 文档](docs/learning-policy.md)。
 
 ## 系统如何工作
 
 ```text
 用户问题 / 上传数据
   -> LangGraph Agent Policy
+     -> Requirement Analyst -> 信息不足：针对性追问
      -> Planner
      -> Data Agent
      -> Modeler
@@ -465,11 +475,45 @@ node --check web/app.js
 PYTHONPATH=. python scripts/generate_rl_dataset.py --output data/rl/baseline.jsonl
 ```
 
+## 训练 Recovery Policy
+
+```bash
+pip install -r requirements-rl.txt
+python scripts/train_recovery_policy.py
+```
+
+每次训练都会创建独立的 `run_id`，并在 `artifacts/rl/runs/` 中保存 manifest、checkpoint、完整报告和追加式历史索引；成功和失败运行都不会覆盖旧记录。
+
+训练真实 Gateway 成本感知策略：
+
+```bash
+python scripts/train_real_recovery_policy.py --seed 47 --episodes 1200
+```
+
+训练真实 MCP stdio 故障恢复策略：
+
+```bash
+python scripts/train_mcp_transport_policy.py \
+  --seed 52 \
+  --episodes 1500 \
+  --bc-epochs 180
+```
+
+该入口会启动隔离的 MCP 子进程，采集正常、超时、断连和非法结构返回，并把安全摘要、任务集、checkpoint 与评测报告写入独立 run 目录。当前训练不调用 LLM API，也不会把 API Key、Token 或原始错误文本写入训练产物。
+
+## 运行真实端到端 Benchmark
+
+```bash
+PYTHONPATH=. python scripts/run_e2e_benchmark.py --output data/benchmarks/e2e-smoke.json
+```
+
 ## Roadmap
 
+- 完善多轮需求 Agent：支持显式修改/删除约束、方案确认、what-if 分支和会话摘要压缩。
+- 建立对话 policy 评测集，测量澄清轮数、需求覆盖率、无效工具调用率与最终求解成功率。
 - 构建 optimization-agent trajectory 数据集，记录状态、动作、工具观察与终局结果。
 - 实现确定性的 Solution Verifier，把约束违反、目标值复算和求解状态变成奖励信号。
-- 建立 rule、LLM planner、behavior cloning、offline RL 的统一评测基线。
+- 将已实现的 Rule、Random Valid 和 BC + Masked Double DQN 扩展到远程 Streamable HTTP MCP 与生产轨迹。
 - 学习高层工具路由与失败恢复策略，先不直接学习求解器内部搜索。
 - 加入预算约束下的 solver portfolio routing，联合优化正确率、解质量、延迟和调用成本。
 - 扩展 VRP/VRPTW、网络流、员工排班与鲁棒优化任务。

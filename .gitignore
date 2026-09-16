@@ -8,6 +8,8 @@ __pycache__/
 
 data/optiagent.sqlite3
 data/rl/*.jsonl
+data/benchmarks/*.json
+artifacts/rl/
 
 .env
 .env.*
@@ -25,3 +27,7 @@ docs/*
 !docs/research-direction.md
 !docs/trajectory-data.md
 !docs/rl-environment.md
+!docs/e2e-test-plan.md
+!docs/learning-policy.md
+!docs/two-track-roadmap.md
+!docs/multi-turn-agent-roadmap.md

@@ -10,7 +10,7 @@
 ![SQLite](https://img.shields.io/badge/SQLite-Local%20Storage-003B57?logo=sqlite&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-OptiAgent is evolving into a research platform around **Learning an Agent Policy for Automated Optimization Modeling and Solving**. It treats optimization assistance as a sequential decision problem spanning clarification, retrieval, modeling, tool routing, solving, verification, and repair.
+OptiAgent is evolving into a two-track research platform. The first track learns an Agent policy for planning, MCP tool routing, solving, verification, and recovery. The second track will deploy an open-source language model in the cloud and post-train it with SFT and GRPO for optimization modeling, structured tool use, and verifier-guided repair. Solvers and deterministic verifiers provide the shared executable feedback loop.
 
 ## Why This Repo
 
@@ -48,6 +48,9 @@ Architecture:
 - A typed recovery policy with candidate actions, action masks, and bounded modeling/solver retries
 - Live `agent_step` events and streaming answer output through `/api/ask/stream`
 - Versioned episode/step storage with state-action-observation and offline-training exports
+- A real Gateway/Solver/Verifier smoke benchmark covering six templates, schema faults, and tampered objectives
+- A learnable recovery policy using behavior-cloning warm-up and action-masked Double DQN
+- A transport-aware policy trained on real MCP stdio timeout, disconnect, and invalid-structure traces
 - Session-isolated file handling and SQLite persistence
 
 ## Supported Executable Templates
@@ -84,6 +87,9 @@ User question / uploaded data
 - [docs/research-direction.md](docs/research-direction.md): research question, policy formulation, reward design, and experimental roadmap
 - [docs/trajectory-data.md](docs/trajectory-data.md): episode schema, lifecycle, and training export contract
 - [docs/rl-environment.md](docs/rl-environment.md): action space, rewards, fault scenarios, and reproducible rollouts
+- [docs/e2e-test-plan.md](docs/e2e-test-plan.md): real solver test matrix, acceptance metrics, and fault-injection roadmap
+- [docs/learning-policy.md](docs/learning-policy.md): state encoder, BC/Double-DQN objective, hyperparameters, and initial results
+- [docs/two-track-roadmap.md](docs/two-track-roadmap.md): Agent-policy and open-model post-training architecture, data loop, evaluation, and milestones
 
 ## Quick Start
 
@@ -116,6 +122,32 @@ Open:
 ```text
 http://127.0.0.1:8000
 ```
+
+Train the learnable Recovery Policy:
+
+```bash
+pip install -r requirements-rl.txt
+python scripts/train_recovery_policy.py
+```
+
+Every attempt receives a unique run ID and writes an immutable manifest, checkpoint, report, and append-only history under `artifacts/rl/runs/`. Failed runs are recorded as well.
+
+Train the cost-aware policy on verified results collected from the real Gateway/Solver/Verifier path:
+
+```bash
+python scripts/train_real_recovery_policy.py --seed 47 --episodes 1200
+```
+
+Train the transport-aware recovery policy on controlled, real MCP stdio failures:
+
+```bash
+python scripts/train_mcp_transport_policy.py \
+  --seed 52 \
+  --episodes 1500 \
+  --bc-epochs 180
+```
+
+This run launches isolated MCP subprocesses, captures normal, timeout, disconnect, and invalid structured responses, and stores a redacted dataset, checkpoint, and evaluation report in an immutable run directory. It does not call the LLM API during training.
 
 ## Example Inputs
 

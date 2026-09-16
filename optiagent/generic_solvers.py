@@ -8,9 +8,8 @@ from typing import Any
 
 import pandas as pd
 
-from optiagent.problem_spec import ProblemSpec
 from optiagent.solver_config import configure_gurobi_model, get_solver_config, quality_status
-from optiagent.solver_registry import GenericSolverAdapter, register_generic_solver, solve_with_registered_solver
+from optiagent.solver_registry import GenericSolverAdapter, register_generic_solver
 
 
 @dataclass(frozen=True)
@@ -30,10 +29,6 @@ class GenericSolveResult:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
-
-
-def solve_by_problem_spec(question: str, spec: ProblemSpec) -> GenericSolveResult | None:
-    return solve_with_registered_solver(question, spec)
 
 
 def solve_knapsack(

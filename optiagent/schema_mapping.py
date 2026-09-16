@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from itertools import permutations
-import re
 
 import pandas as pd
 

@@ -15,13 +15,14 @@ const providers = {
 
 // 前端预先绘制完整工作流，SSE 到达后只更新对应节点状态。
 const agentNodeBlueprint = [
-  { node_id: "planner", label: "Planner", description: "识别意图与规划工具链", sequence: 1 },
-  { node_id: "data", label: "Data Agent", description: "定位并检查当前数据上下文", sequence: 2 },
-  { node_id: "modeler", label: "Modeler", description: "生成结构化问题定义", sequence: 3 },
-  { node_id: "solver", label: "Solver", description: "通过 MCP Gateway 执行求解", sequence: 4 },
-  { node_id: "verifier", label: "Verifier", description: "检查响应合同与求解状态", sequence: 5 },
-  { node_id: "policy", label: "Policy", description: "根据验证反馈选择接受、恢复或终止", sequence: 6 },
-  { node_id: "explainer", label: "Explainer", description: "组织业务结论与可审计轨迹", sequence: 7 },
+  { node_id: "requirements", label: "Requirement Analyst", description: "汇总多轮需求并判断是否需要澄清", sequence: 1 },
+  { node_id: "planner", label: "Planner", description: "识别意图与规划工具链", sequence: 2 },
+  { node_id: "data", label: "Data Agent", description: "定位并检查当前数据上下文", sequence: 3 },
+  { node_id: "modeler", label: "Modeler", description: "生成结构化问题定义", sequence: 4 },
+  { node_id: "solver", label: "Solver", description: "通过 MCP Gateway 执行求解", sequence: 5 },
+  { node_id: "verifier", label: "Verifier", description: "检查响应合同与求解状态", sequence: 6 },
+  { node_id: "policy", label: "Policy", description: "根据验证反馈选择接受、恢复或终止", sequence: 7 },
+  { node_id: "explainer", label: "Explainer", description: "组织业务结论与可审计轨迹", sequence: 8 },
 ];
 
 const state = {
@@ -29,7 +30,6 @@ const state = {
   activeConversationId: Number(localStorage.getItem("optiagent_active_conversation_id") || 0) || null,
   hasData: false,
   token: localStorage.getItem("optiagent_session_token") || "",
-  lastResult: null,
   conversations: [],
   conversationSearch: "",
 };
@@ -380,7 +380,7 @@ function appendWelcomeMessage() {
   article.innerHTML = `
     <div class="avatar">OA</div>
     <div class="message-body">
-      <p>你好，上传 CSV 后我会先读取当前对话内的文件，再根据你的问题进行建模、分析或求解。</p>
+      <p>你好，你可以先描述业务目标。我会在当前对话中持续整理目标、约束和数据缺口，信息足够后再建模求解。</p>
       <div class="suggestion-row">
         <button class="suggestion">分析当前供应链数据</button>
         <button class="suggestion">求解一个背包问题</button>
@@ -390,195 +390,6 @@ function appendWelcomeMessage() {
   `;
   stream.appendChild(article);
   bindSuggestionButtons(article);
-}
-
-function renderResult(result) {
-  state.lastResult = result;
-  renderStructured(result.structured_answer);
-  renderProblemSpec(result.problem_spec, result.rag_context || {});
-  renderDecisionTable(result);
-  setText("answerBox", result.structured_answer?.raw_answer || result.answer);
-  setText("objectiveMetric", fmt(result.objective_value));
-  setText("transportMetric", fmt(result.transport_cost));
-  setText("fixedMetric", fmt(result.fixed_cost));
-  setText("statusMetric", result.status || "-");
-  appendAssistantMessage(result);
-}
-
-function renderDecisionTable(result) {
-  const warehouseRows = result.warehouse_summary || [];
-  if (!result.generic_result && !warehouseRows.length) {
-    setText("resultTableTitle", "");
-    const table = byId("warehouseTable");
-    if (table) {
-      table.innerHTML = "";
-    }
-    return;
-  }
-  if (result.generic_result) {
-    renderGenericDecisionTable(result.generic_result);
-    return;
-  }
-  setText("resultTableTitle", "推荐启用仓库");
-  const openRows = warehouseRows.filter((row) => row.is_open === 1);
-  const table = byId("warehouseTable");
-  if (!table) {
-    return;
-  }
-  if (!openRows.length) {
-    table.textContent = "暂无可用方案。";
-    return;
-  }
-  table.innerHTML = `
-    <table>
-      <thead><tr><th>仓库</th><th>区域</th><th>使用量</th><th>利用率</th><th>固定成本</th></tr></thead>
-      <tbody>
-        ${openRows.map((row) => `
-          <tr>
-            <td>${escapeHtml(row.warehouse)}</td>
-            <td>${escapeHtml(row.region)}</td>
-            <td>${fmt(row.used_capacity)}</td>
-            <td>${row.utilization == null ? "-" : (row.utilization * 100).toFixed(1) + "%"}</td>
-            <td>${fmt(row.active_fixed_cost)}</td>
-          </tr>
-        `).join("")}
-      </tbody>
-    </table>
-  `;
-}
-
-function renderGenericDecisionTable(generic) {
-  const table = byId("warehouseTable");
-  if (!table) {
-    return;
-  }
-  setText("resultTableTitle", generic.display_name);
-  const decisions = generic.decisions || [];
-  if (!decisions.length) {
-    table.textContent = generic.summary || "暂无可用方案。";
-    return;
-  }
-  if (generic.template_id === "knapsack") {
-    table.innerHTML = `
-      <table>
-        <thead><tr><th>项目</th><th>是否选择</th><th>价值</th><th>资源消耗</th></tr></thead>
-        <tbody>
-          ${decisions.map((row) => `
-            <tr>
-              <td>${escapeHtml(displayItemName(row.item))}</td>
-              <td>${row.selected === 1 ? "选择" : "不选"}</td>
-              <td>${fmt(row.value)}</td>
-              <td>${fmt(row.weight)}</td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-    `;
-    return;
-  }
-  if (generic.template_id === "assignment") {
-    table.innerHTML = `
-      <table>
-        <thead><tr><th>资源</th><th>任务</th><th>成本</th></tr></thead>
-        <tbody>
-          ${decisions.map((row) => `
-            <tr>
-              <td>${escapeHtml(row.resource)}</td>
-              <td>${escapeHtml(row.task)}</td>
-              <td>${fmt(row.cost)}</td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-    `;
-    return;
-  }
-  if (generic.template_id === "tsp") {
-    table.innerHTML = `
-      <table>
-        <thead><tr><th>从</th><th>到</th><th>距离</th></tr></thead>
-        <tbody>
-          ${decisions.map((row) => `
-            <tr>
-              <td>${escapeHtml(row.from)}</td>
-              <td>${escapeHtml(row.to)}</td>
-              <td>${fmt(row.distance)}</td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-    `;
-    return;
-  }
-  if (generic.template_id === "job_shop_scheduling") {
-    table.innerHTML = `
-      <table>
-        <thead><tr><th>作业</th><th>机器</th><th>顺序</th><th>开始</th><th>结束</th><th>时长</th></tr></thead>
-        <tbody>
-          ${decisions.map((row) => `
-            <tr>
-              <td>${escapeHtml(row.job)}</td>
-              <td>${escapeHtml(row.machine)}</td>
-              <td>${fmt(row.order)}</td>
-              <td>${fmt(row.start)}</td>
-              <td>${fmt(row.end)}</td>
-              <td>${fmt(row.duration)}</td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-    `;
-    return;
-  }
-  if (generic.template_id === "production_mix") {
-    table.innerHTML = `
-      <table>
-        <thead><tr><th>产品</th><th>产量</th><th>单位利润</th><th>利润贡献</th></tr></thead>
-        <tbody>
-          ${decisions.map((row) => `
-            <tr>
-              <td>${escapeHtml(row.product)}</td>
-              <td>${fmt(row.quantity)}</td>
-              <td>${fmt(row.profit)}</td>
-              <td>${fmt(row.total_profit)}</td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-    `;
-    return;
-  }
-  renderDynamicDecisionTable(table, decisions);
-}
-
-function renderDynamicDecisionTable(table, decisions) {
-  const columns = Array.from(new Set(decisions.flatMap((row) => Object.keys(row))));
-  table.innerHTML = `
-    <table>
-      <thead><tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead>
-      <tbody>
-        ${decisions.map((row) => `
-          <tr>${columns.map((column) => `<td>${escapeHtml(row[column] ?? "")}</td>`).join("")}</tr>
-        `).join("")}
-      </tbody>
-    </table>
-  `;
-}
-
-function renderProblemSpec(spec, ragContext = {}) {
-  const root = byId("problemSpecBox");
-  if (!root) {
-    return;
-  }
-  root.innerHTML = buildProblemSpecHtml(spec, ragContext);
-}
-
-function renderStructured(structured) {
-  const root = byId("structuredBox");
-  if (!root) {
-    return;
-  }
-  root.innerHTML = buildStructuredHtml(structured);
 }
 
 async function ask() {
@@ -614,12 +425,11 @@ async function ask() {
       setActiveConversation(result.conversation_id);
     }
     streamingMessage.remove();
-    renderResult(result);
+    appendAssistantMessage(result);
     setText("runStatus", "完成");
     loadAll().catch((err) => console.error(err));
   } catch (err) {
     setText("runStatus", "失败");
-    setText("answerBox", err.message);
     streamingMessage.fail(err.message);
   }
 }
@@ -752,7 +562,6 @@ async function clearHistory() {
   state.activeConversationId = null;
   state.activeDatasetId = null;
   state.hasData = false;
-  state.lastResult = null;
   localStorage.removeItem("optiagent_active_conversation_id");
   clearChatStream();
   await loadAll();
@@ -767,7 +576,6 @@ async function newConversation() {
   setActiveConversation(created.conversation.id);
   state.activeDatasetId = null;
   state.hasData = false;
-  state.lastResult = null;
   clearChatStream();
   await loadAll();
 }
@@ -951,6 +759,8 @@ function appendAssistantMessage(result) {
   const tableTitle = tablePayload.title;
   const answer = result.structured_answer?.raw_answer || result.answer || "";
   const answerBlock = result.generic_result || result.structured_answer ? "" : `<div class="answer">${escapeHtml(answer)}</div>`;
+  const requirementAnalysis = buildRequirementAnalysisHtml(result.requirement_analysis);
+  const resultTitle = result.status === "NEEDS_CLARIFICATION" ? "需求分析" : "优化结论";
   const toolNames = (result.tool_names || []).map((name) => `<span>${escapeHtml(name)}</span>`).join("");
   const ragDocs = (result.rag_docs || []).map((name) => `<span>${escapeHtml(name)}</span>`).join("");
   const graphNodes = result.agent_graph?.nodes || [];
@@ -1005,10 +815,11 @@ function appendAssistantMessage(result) {
     <div class="avatar">OA</div>
     <div class="message-body">
       <div class="result-card">
-        <div class="card-title"><span>优化结论</span><span>${escapeHtml(result.status || "-")}</span></div>
+        <div class="card-title"><span>${resultTitle}</span><span>${escapeHtml(result.status || "-")}</span></div>
         <div class="result-summary">${resultSummary}</div>
         ${answerBlock}
       </div>
+      ${requirementAnalysis ? `<div class="requirement-card">${requirementAnalysis}</div>` : ""}
       ${graphCard}
       ${tableCard}
       ${analysis.trim() ? `<div class="model-card">
@@ -1023,6 +834,35 @@ function appendAssistantMessage(result) {
   `;
   stream.appendChild(article);
   scrollChatToBottom();
+}
+
+function buildRequirementAnalysisHtml(brief) {
+  // 需求面板只展示结构化摘要，不暴露模型隐藏推理或运行时密钥。
+  if (!brief || !brief.summary) {
+    return "";
+  }
+  const readinessLabels = {
+    needs_clarification: "等待补充",
+    ready_for_analysis: "可分析",
+    ready_to_solve: "可求解",
+  };
+  const constraints = (brief.constraints || []).slice(0, 5);
+  const missing = (brief.missing_information || []).slice(0, 4);
+  const questions = (brief.clarification_questions || []).slice(0, 4);
+  return `
+    <div class="requirement-head">
+      <div><span>需求理解</span><small>第 ${escapeHtml(brief.turn_count || 1)} 轮累计</small></div>
+      <em class="${escapeHtml(brief.readiness || "needs_clarification")}">${escapeHtml(readinessLabels[brief.readiness] || brief.readiness)}</em>
+    </div>
+    <p>${escapeHtml(brief.summary)}</p>
+    <div class="requirement-facts">
+      <div><span>问题</span><strong>${escapeHtml(brief.problem_type || "待确认")}</strong></div>
+      <div><span>目标</span><strong>${escapeHtml(brief.objective || "待确认")}</strong></div>
+    </div>
+    ${constraints.length ? `<div class="requirement-list"><span>已确认约束</span><ul>${constraints.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
+    ${missing.length ? `<div class="requirement-list warning"><span>仍缺少</span><ul>${missing.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
+    ${questions.length ? `<div class="requirement-list questions"><span>请继续回答</span><ol>${questions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ol></div>` : ""}
+  `;
 }
 
 function buildAgentGraphHtml(nodes, live = false) {

@@ -2,19 +2,23 @@
 
 ## 目标
 
-第一周把原先集中在 `handle_ask()` 中的过程迁移为一个可观测的 LangGraph 状态图，同时保持已有 API、MCP Gateway、求解器和前端样式兼容。它是后续采集 trajectory、计算 reward 和学习 Agent policy 的基础。
+将一次性的“提问即求解”管线升级为可观测、可持久化、可学习的多轮 Agent 状态图。系统先理解业务需求，再决定是否进入建模求解；每个节点都保留 trajectory，为后续学习 Agent policy 提供状态、动作与奖励数据。
 
 ## 当前状态图
 
 ```mermaid
 flowchart LR
-    U[用户问题 / 数据] --> P[Planner]
+    U[用户当前消息] --> RA[Requirement Analyst]
+    CM[(Conversation Requirement Memory)] --> RA
+    RA --> CM
+    RA -->|信息不足| E[Explainer / 针对性追问]
+    RA -->|可分析或可求解| P[Planner]
     P --> D[Data Agent]
     D --> M[Modeler]
     M --> S[Solver]
     S --> V[Verifier]
     V --> P2[Recovery Policy]
-    P2 -->|accept_solution / terminate| E[Explainer]
+    P2 -->|accept_solution / terminate| E
     P2 -->|retry_solver| S
     P2 -->|rebuild_model| M
     S --> G[MCP Optimization Gateway]
@@ -24,7 +28,8 @@ flowchart LR
 
 | 节点 | 当前职责 | 主要输出 |
 | --- | --- | --- |
-| Planner | 读取会话上下文，识别求解意图与问题模板 | `AskExecutionContext` |
+| Requirement Analyst | 合并历史需求与本轮补充，区分已确认信息、假设和信息缺口 | `RequirementBrief` / `requirement_route` |
+| Planner | 基于已合并的需求识别求解意图与问题模板 | `AskExecutionContext` |
 | Data Agent | 判断数据来自数据集、上传文件、内联 JSON 或对话 | `data_context` |
 | Modeler | 构建标准化 `ProblemSpec` | `problem_spec` |
 | Solver | 复用现有回答链路，经 MCP Gateway 调用确定性求解器 | `result` |
@@ -36,7 +41,10 @@ flowchart LR
 
 状态在节点之间显式传递，核心字段包括：
 
-- `question`：用户自然语言问题。
+- `original_question`：本轮用户原始消息，用于展示和审计。
+- `question`：Requirement Analyst 合并后的可执行需求，供后续节点使用。
+- `requirement_analysis`：当前会话的结构化需求摘要。
+- `requirement_route`：`clarify` 或 `proceed`，防止缺数据请求误调 Solver。
 - `execution_context`：Planner 生成的数据集、文件、LLM 路由和求解意图上下文。
 - `data_context`：Data Agent 输出的数据来源摘要。
 - `problem_spec`：Modeler 生成的结构化问题定义。
@@ -68,7 +76,7 @@ flowchart LR
 status -> agent_step* -> answer_delta* -> final
 ```
 
-前端收到事件后更新同一条消息中的七阶段执行轨道。实时视图保持职责节点顺序，历史视图使用 `transition_sequence` 显示实际重试路径。最终响应中的 `agent_graph` 会写入 SQLite，因此刷新页面后仍可恢复完整轨迹。
+前端收到事件后更新同一条消息中的八阶段执行轨道。实时视图保持职责节点顺序，历史视图使用 `transition_sequence` 显示实际重试路径。若 Requirement Analyst 判断信息不足，实际轨迹只会包含 `requirements → explainer`，后续节点不会被调用。最终响应中的 `agent_graph` 会写入 SQLite，因此刷新页面后仍可恢复完整轨迹。
 
 每次工作流还会创建独立 `agent_episode_id`。节点开始时保存 policy state 和 action，节点结束时保存 observation、耗时、状态和可选 reward；工作流异常也会持久化失败 step 与 `-1.0` 终局奖励。完整数据合同见 [Trajectory 数据文档](trajectory-data.md)。
 
@@ -87,6 +95,8 @@ LangGraph Verifier 将响应合同、终局状态、数学可行性和目标一�
 
 ## 当前边界
 
+- Requirement Analyst 已具备本地确定性规则和可选 LLM 细化，但对“删除上一条约束”这类显式状态编辑指令还没有独立操作语义。
+- 需求完整性奖励尚未与后续求解成功、澄清轮数和用户确认联合起来。
 - 现在已加入 Verifier 后的条件边和有界恢复回路；当前仍是确定性 baseline，尚未由参数化 policy 选择动作。
 - `rebuild_model` 会把 Verifier 反馈送回 Modeler；当前模板建模器是确定性的，后续需接入可编辑模型草案才能产生更丰富的修复行为。
 - Verifier 已覆盖当前六类模板的可行性和目标值复算，但不会重新求解问题来独立证明全局最优性。
@@ -98,6 +108,8 @@ LangGraph Verifier 将响应合同、终局状态、数学可行性和目标一�
 ## 代码入口
 
 - `api/services/agent_workflow.py`：状态、节点、事件包装器与图编译。
+- `api/services/requirement_service.py`：会话需求读取、分析、持久化和澄清响应。
+- `optiagent/requirement_analysis.py`：`RequirementBrief` 合同、本地兜底和 LLM 需求精炼。
 - `api/services/ask_service.py`：可复用的 Planner 上下文与现有业务求解链路。
 - `optiagent/agent_policy.py`：候选动作合同与确定性恢复 baseline。
 - `optiagent/solution_verifier.py`：六类模板的独立数学验算。

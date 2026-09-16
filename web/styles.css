@@ -224,7 +224,6 @@ textarea:focus {
   font-size: 12px;
 }
 
-.side-action,
 .list button,
 .list .item {
   width: 100%;
@@ -238,7 +237,6 @@ textarea:focus {
   white-space: nowrap;
 }
 
-.side-action:hover,
 .list button:hover,
 .list .item:hover {
   background: #ececee;
@@ -334,7 +332,6 @@ textarea:focus {
   gap: 8px;
 }
 
-.metric-grid span,
 .spec-box span {
   display: block;
   color: var(--muted);
@@ -376,17 +373,12 @@ textarea:focus {
   line-height: 1.6;
 }
 
-.inline-form,
 .llm-grid,
 .composer-actions,
 .suggestion-row {
   display: flex;
   align-items: center;
   gap: 10px;
-}
-
-.inline-form {
-  margin-top: 10px;
 }
 
 .upload-card {
@@ -592,12 +584,117 @@ textarea:focus {
 
 .result-card,
 .model-card,
-.table-card {
+.table-card,
+.requirement-card {
   margin-top: 14px;
   border: 1px solid var(--line);
   border-radius: 18px;
   background: #fff;
   overflow: hidden;
+}
+
+/* 多轮需求卡片突出“已确认”和“待补充”，避免用户误以为已经开始求解。 */
+.requirement-card {
+  padding-bottom: 16px;
+  background: #fbfcff;
+  border-color: #dbe5f4;
+}
+
+.requirement-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid #e5eaf1;
+  background: #fff;
+}
+
+.requirement-head span,
+.requirement-head small {
+  display: block;
+}
+
+.requirement-head span {
+  font-weight: 760;
+}
+
+.requirement-head small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.requirement-head em {
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #eef6f0;
+  color: #287044;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.requirement-head em.needs_clarification {
+  background: #fff7ed;
+  color: #9a4d0c;
+}
+
+.requirement-card > p {
+  padding: 14px 16px 0;
+  color: #334155;
+}
+
+.requirement-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px 16px 0;
+}
+
+.requirement-facts div {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.requirement-facts span,
+.requirement-list > span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.requirement-facts strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+}
+
+.requirement-list {
+  margin: 12px 16px 0;
+  padding: 11px 13px;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.requirement-list.warning,
+.requirement-list.questions {
+  background: #fffaf3;
+}
+
+.requirement-list ul,
+.requirement-list ol {
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+
+.requirement-list li {
+  margin: 3px 0;
+  color: #334155;
+  font-size: 13px;
 }
 
 .card-title {
@@ -958,8 +1055,6 @@ textarea:focus {
   line-height: 1.65;
 }
 
-.structured-grid,
-.metric-grid,
 .spec-head,
 .rag-hit-grid {
   display: grid;
@@ -970,14 +1065,6 @@ textarea:focus {
   background: var(--line);
 }
 
-.structured-grid {
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-}
-
-.metric-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
 .spec-head {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -986,16 +1073,12 @@ textarea:focus {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.structured-grid div,
-.metric-grid div,
 .spec-head div,
 .rag-hit-grid div {
   background: #fff;
   padding: 11px 12px;
 }
 
-.structured-grid strong,
-.metric-grid strong,
 .spec-box strong {
   display: block;
   margin-top: 4px;
@@ -1070,10 +1153,6 @@ td {
 th {
   color: var(--muted);
   font-weight: 650;
-}
-
-.result-cache {
-  display: none;
 }
 
 .composer-wrap {
@@ -1177,8 +1256,6 @@ th {
   }
 
   .llm-grid,
-  .structured-grid,
-  .metric-grid,
   .spec-head,
   .spec-columns,
   .rag-hit-grid {

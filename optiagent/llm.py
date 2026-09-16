@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+import json
+import math
+import re
+from typing import Any
 
-import pandas as pd
 import requests
-
-from optiagent.data import SupplyChainData
 
 
 @dataclass(frozen=True)
@@ -25,32 +27,46 @@ class DataProfile:
     llm_used: bool
 
 
-def profile_supply_chain_data(data: SupplyChainData, config: LLMConfig | None) -> DataProfile:
-    fallback = _rule_based_profile(data)
-    if not config or not config.enabled:
-        return DataProfile(source="本地规则解析", summary=fallback, warnings=[], llm_used=False)
+def llm_config_from_record(record: Mapping[str, Any] | None) -> LLMConfig | None:
+    """将数据库或配置文件记录统一转换为运行时 LLM 配置。"""
 
-    prompt = _build_profile_prompt(data, fallback)
+    if not record:
+        return None
+    return LLMConfig(
+        enabled=True,
+        api_key=str(record["api_key"]),
+        base_url=str(record["base_url"]),
+        model=str(record["model"]),
+        temperature=float(record.get("temperature", 0.2)),
+    )
+
+
+def parse_json_object(text: str, *, error_message: str = "LLM 未返回 JSON 对象。") -> dict[str, Any]:
+    """解析 LLM 返回的纯 JSON 或 Markdown JSON 代码块。"""
+
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.IGNORECASE)
     try:
-        content = call_openai_compatible_chat(
-            config=config,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "你是供应链优化数据分析助手。请用中文简洁分析数据，不要编造上传数据中不存在的字段。",
-                },
-                {"role": "user", "content": prompt},
-            ],
-        )
-    except Exception as exc:
-        return DataProfile(
-            source="本地规则解析",
-            summary=fallback,
-            warnings=[f"模型服务暂时不可用，已回退到本地规则解析（{type(exc).__name__}）。"],
-            llm_used=False,
-        )
+        value = json.loads(cleaned)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+        if not match:
+            raise ValueError(error_message)
+        value = json.loads(match.group(0))
+    if not isinstance(value, dict):
+        raise ValueError(error_message)
+    return value
 
-    return DataProfile(source=f"LLM：{config.model}", summary=content.strip(), warnings=[], llm_used=True)
+
+def clamp_probability(value: Any, *, default: float = 0.0) -> float:
+    """把外部返回的置信度安全转换为 0 到 1 的有限数值。"""
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(number) or math.isinf(number):
+        return default
+    return max(0.0, min(number, 1.0))
 
 
 def call_openai_compatible_chat(config: LLMConfig, messages: list[dict[str, str]]) -> str:
@@ -73,43 +89,3 @@ def call_openai_compatible_chat(config: LLMConfig, messages: list[dict[str, str]
     response.raise_for_status()
     payload = response.json()
     return payload["choices"][0]["message"]["content"]
-
-
-def _rule_based_profile(data: SupplyChainData) -> str:
-    total_capacity = data.warehouses["capacity"].sum()
-    total_demand = data.customers["demand"].sum()
-    fixed_cost_total = data.warehouses["fixed_cost"].sum()
-    warehouse_count = len(data.warehouses)
-    customer_count = len(data.customers)
-    candidate_regions = ", ".join(sorted(data.warehouses["region"].astype(str).unique()))
-    most_demand = data.customers.sort_values("demand", ascending=False).head(3)
-    most_demand_text = "、".join(
-        f"{row.customer}({row.demand:.0f})" for row in most_demand.itertuples(index=False)
-    )
-    cheapest_routes = data.costs.sort_values("cost").head(5)
-    route_text = "、".join(
-        f"{row.warehouse}->{row.customer}({row.cost:.2f})"
-        for row in cheapest_routes.itertuples(index=False)
-    )
-    ratio = total_demand / total_capacity if total_capacity else 0
-    return (
-        f"数据包含 {warehouse_count} 个候选仓库、{customer_count} 个客户点，候选区域为 {candidate_regions}。"
-        f"总容量 {total_capacity:,.0f}，总需求 {total_demand:,.0f}，需求/容量比为 {ratio:.1%}。"
-        f"候选仓库固定成本合计 {fixed_cost_total:,.0f}。需求最高的客户为 {most_demand_text}。"
-        f"最低成本线路包括 {route_text}。"
-    )
-
-
-def _build_profile_prompt(data: SupplyChainData, fallback: str) -> str:
-    return (
-        "请先阅读以下供应链数据解析和表格样本，然后输出 5-8 条中文要点，"
-        "说明数据规模、容量是否充足、需求集中点、固定成本特点、潜在风险，以及适合用什么优化模型。\n\n"
-        f"本地规则摘要：{fallback}\n\n"
-        f"仓库表：\n{_sample_table(data.warehouses)}\n\n"
-        f"客户表：\n{_sample_table(data.customers)}\n\n"
-        f"运输成本表样本：\n{_sample_table(data.costs, rows=12)}"
-    )
-
-
-def _sample_table(frame: pd.DataFrame, rows: int = 8) -> str:
-    return frame.head(rows).to_csv(index=False)

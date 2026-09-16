@@ -1,4 +1,4 @@
-# Research Direction: Learning an Agent Policy for Automated Optimization Modeling and Solving
+# Research Direction: Learning Agent and Model Policies for Automated Optimization Modeling and Solving
 
 ## 1. 核心研究问题
 
@@ -16,6 +16,13 @@ $$
 6. 在失败时定位错误并修复，而不是直接停止或产生不可验证答案。
 
 这一定义把项目从“LLM 包装的求解器”转变为“在可验证优化环境中进行序列决策的 Agent”。
+
+项目未来分为两条主线：
+
+- **Agent System**：保留原研究问题，学习规划、MCP 路由、求解控制和失败恢复；
+- **Open Model Post-Training**：在云端部署开源语言模型，通过 SFT 与 GRPO 学习 `ProblemSpec`、tool call、建模与修复。
+
+两条主线共享 trajectory、Solver 和 Solution Verifier，但不混淆训练对象。Agent policy 输出有限高层动作，语言模型 policy 输出 token 或结构化建模结果。完整设计见 [双主线总体路线](two-track-roadmap.md)。
 
 ## 2. 研究假设
 
@@ -86,11 +93,12 @@ $$
 
 ### 阶段 C：Behavior Cloning
 
-从规则、强 LLM 和人工修正产生的高质量轨迹学习初始 policy。Behavior cloning 用来建立稳定起点，并验证状态与动作表示是否足够。
+从规则、强 LLM 和人工修正产生的高质量轨迹学习初始 policy。当前已实现基于 29 维结构化状态和 action mask 的 BC 预热。
 
 ### 阶段 D：Offline RL / Preference Optimization
 
 利用历史轨迹中的 solver/verifier reward 学习比行为策略更好的工具路由和失败恢复策略。离线训练适合个人项目：实验可复现、成本可控，也避免在线探索频繁产生无效求解。
+当前已在可控微型环境上实现 Action-Masked Double DQN，使用真实 Gateway/Solver/Verifier 输出构建成本感知恢复任务，并通过真实 MCP stdio 会话采集超时、子进程断连和非法结构返回。生产 trajectory store 的 offline RL、远程 Streamable HTTP 故障和真实 LLM 建模失败学习尚未完成。
 
 ### 阶段 E：受约束的在线改进
 
@@ -134,13 +142,13 @@ $$
 
 | 研究组件 | 当前实现 | 下一步 |
 | --- | --- | --- |
-| Policy execution | LangGraph 条件状态图、四动作 Recovery Policy、有界重试 | 参数化 policy、动作概率与动态预算 |
-| Environment | MCP + Gateway，以及可独立 `reset/step` 的 RL 微型环境 | 将故障注入从模拟转移接入真实 MCP/Solver |
-| State | `AgentWorkflowState`、尝试预算、Verifier 反馈与无密钥 snapshot | 环境特征、成本预算与动作历史编码 |
+| Policy execution | LangGraph 条件状态图、四动作 Recovery Policy、有界重试、独立参数化 policy | 将学习策略接入主 LangGraph，并支持动态预算 |
+| Environment | MCP + Gateway、真实 stdio transport 故障，以及可独立 `reset/step` 的 RL 环境 | 扩展远程 HTTP、LLM 和生产网络故障 |
+| State | `AgentWorkflowState`、Verifier/成本/transport 反馈与 29/35/40 维版本化编码 | 加入 LLM 置信度、历史摘要和跨步工具上下文 |
 | Trajectory | episode/step store、候选动作、mask、`next_state` 与 decision transitions | 数据集版本、质量筛选和批量文件导出 |
 | Reward | 六类数学 Solution Verifier、响应合同与确定性终局 reward | 加入成本、延迟与跨实例归一化 reward |
-| Baselines | 本地规则、可选 LLM planner | ReAct、BC、offline RL 统一接口 |
-| Evaluation | 72 任务分层 Recovery Benchmark、可复现 rollout 和回归测试 | 真实 OR 实例、指标面板和消融实验 |
+| Baselines | Rule、Random Valid、BC + Action-Masked Double DQN | ReAct、真实轨迹 Offline RL 与统一推理接口 |
+| Evaluation | 72 任务 Recovery Benchmark、六模板真实 Solver 测试和 90 任务 MCP transport 测试 | 大规模 OR 实例、远程 MCP、指标面板和消融实验 |
 
 ## 9. 分阶段交付
 
@@ -158,7 +166,8 @@ $$
 - 一套以数学可验证性为核心，而非只依赖 LLM judge 的 reward 与评测方法；
 - 一个比较固定工作流、通用 LLM policy、模仿学习与 RL policy 的可复现实验框架；
 - 对“何时应该学习 Agent policy、何时应该保留确定性优化组件”的工程与研究结论。
+- 一套使用 SFT 与 verifier-guided GRPO 后训练开源模型，并与外部 Agent policy 组合评测的方法。
 
 ## 11. 项目定位边界
 
-OptiAgent 不把 RL 作为装饰性标签。只有在 episode schema、reward、训练方法、对照基线和独立测试集都落地后，项目才会声明具备“learned policy”。在此之前，准确表述是：**一个为 Agent policy learning 准备的、可观测且可验证的自动优化建模与求解环境。**
+OptiAgent 不把 RL 作为装饰性标签。项目现在已经具备 episode schema、reward、BC + Masked Double DQN、对照基线、独立 test split 和真实 MCP stdio 故障轨迹，因此可以声明已实现第一个 **transport-aware learned recovery policy**。但在学习策略接入主 LangGraph、覆盖 LLM 建模动作并通过更大规模未见 OR 实例之前，不宣称已实现“通用 RL Optimization Agent”。

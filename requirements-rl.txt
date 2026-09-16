@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# RL 训练是可选功能，不强制普通 Web/MCP 运行环境安装 PyTorch。
+torch>=2.2

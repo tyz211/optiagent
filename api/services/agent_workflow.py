@@ -17,6 +17,7 @@ from api.database import (
     update_run_result,
 )
 from api.services.ask_service import AskExecutionContext, handle_ask, prepare_ask_context
+from api.services.requirement_service import analyze_requirement_turn, build_clarification_result
 from optiagent.agent_policy import decide_after_verification
 from optiagent.mcp_servers.common import json_safe
 from optiagent.problem_spec import infer_problem_spec
@@ -30,11 +31,14 @@ class AgentWorkflowState(TypedDict, total=False):
     """一次运筹 Agent 运行期间在各节点之间传递的共享状态。"""
 
     question: str
+    original_question: str
     requested_dataset_id: int | None
     mcp_config: str
     user_id: int | None
     conversation_id: int | None
     episode_id: str
+    requirement_analysis: dict[str, Any]
+    requirement_route: str
     execution_context: AskExecutionContext
     data_context: dict[str, Any]
     problem_spec: dict[str, Any] | None
@@ -49,6 +53,7 @@ class AgentWorkflowState(TypedDict, total=False):
 
 
 NODE_DEFINITIONS = [
+    ("requirements", "Requirement Analyst", "汇总多轮需求并判断是否需要澄清"),
     ("planner", "Planner", "识别意图与规划工具链"),
     ("data", "Data Agent", "定位并检查当前数据上下文"),
     ("modeler", "Modeler", "生成结构化问题定义"),
@@ -59,6 +64,7 @@ NODE_DEFINITIONS = [
 ]
 
 NODE_ACTIONS = {
+    "requirements": ("analyze_requirements", "合并会话需求并检查信息完整性"),
     "planner": ("plan", "选择问题模板与执行意图"),
     "data": ("inspect_data", "检查数据来源与可用上下文"),
     "modeler": ("build_problem_spec", "构建结构化优化问题"),
@@ -89,6 +95,7 @@ def run_agent_workflow(
     )
     initial_state: AgentWorkflowState = {
         "question": question,
+        "original_question": question,
         "requested_dataset_id": requested_dataset_id,
         "mcp_config": mcp_config,
         "user_id": user_id,
@@ -108,7 +115,7 @@ def run_agent_workflow(
         result["workflow_verification"] = final_state.get("verification", {})
         result["agent_episode_id"] = episode_id
         result["agent_graph"] = {
-            "version": "1.0",
+            "version": "1.1",
             "engine": "LangGraph",
             "status": "completed",
             "nodes": final_state.get("trace_nodes", []),
@@ -121,7 +128,10 @@ def run_agent_workflow(
         run_id = result.get("run_id")
         if isinstance(run_id, int):
             update_run_result(run_id, result)
-        template_id = (final_state.get("problem_spec") or {}).get("template_id")
+        template_id = (
+            (final_state.get("problem_spec") or {}).get("template_id")
+            or (final_state.get("requirement_analysis") or {}).get("template_id")
+        )
         reward = (final_state.get("verification") or {}).get("reward", {})
         complete_agent_episode(
             episode_id,
@@ -147,13 +157,73 @@ def agent_graph_manifest() -> dict[str, Any]:
     """返回前端可以预先绘制的节点清单。"""
 
     return {
-        "version": "1.0",
+        "version": "1.1",
         "engine": "LangGraph",
         "nodes": [
             {"id": node_id, "label": label, "description": description, "sequence": index}
             for index, (node_id, label, description) in enumerate(NODE_DEFINITIONS, start=1)
         ],
     }
+
+
+def _requirements_node(state: AgentWorkflowState) -> dict[str, Any]:
+    """在规划和求解前合并多轮上下文，信息不足时生成针对性追问。"""
+
+    original_question = state.get("original_question") or state["question"]
+    brief = analyze_requirement_turn(
+        question=original_question,
+        requested_dataset_id=state.get("requested_dataset_id"),
+        user_id=state.get("user_id"),
+        conversation_id=state.get("conversation_id"),
+    )
+    payload = brief.model_dump(mode="json")
+    if brief.readiness == "needs_clarification":
+        result = build_clarification_result(
+            question=original_question,
+            brief=brief,
+            requested_dataset_id=state.get("requested_dataset_id"),
+            user_id=state.get("user_id"),
+            conversation_id=state.get("conversation_id"),
+        )
+        verification = {
+            "scope": "requirement_completeness",
+            "passed": True,
+            "checks": {
+                "requirement_summary_created": True,
+                "solver_guard_applied": True,
+                "ready_to_solve": False,
+            },
+            "errors": [],
+            "reward": {
+                "version": "1.0",
+                "total": 0.0,
+                "components": {"safe_clarification": 0.0},
+                "deterministic": True,
+                "terminal": True,
+            },
+            "note": "需求尚未完整，本轮主动追问且未调用 Solver。",
+        }
+        return {
+            "original_question": original_question,
+            "requirement_analysis": payload,
+            "requirement_route": "clarify",
+            "result": result,
+            "verification": verification,
+            "_trace_detail": f"需要澄清 · {len(brief.missing_information)} 项信息缺口",
+        }
+    return {
+        "original_question": original_question,
+        "question": brief.resolved_request or original_question,
+        "requirement_analysis": payload,
+        "requirement_route": "proceed",
+        "_trace_detail": f"第 {brief.turn_count} 轮需求 · {brief.readiness}",
+    }
+
+
+def _route_after_requirements(state: AgentWorkflowState) -> str:
+    """仅允许需求完整的任务进入 Planner，其余任务转到解释节点追问。"""
+
+    return "clarify" if state.get("requirement_route") == "clarify" else "proceed"
 
 
 def _planner_node(state: AgentWorkflowState) -> dict[str, Any]:
@@ -361,6 +431,8 @@ def _failure_reward(error: str) -> dict[str, Any]:
 
 def _explainer_node(state: AgentWorkflowState) -> dict[str, Any]:
     result = dict(state["result"])
+    result["question"] = state.get("original_question") or state["question"]
+    result["requirement_analysis"] = state.get("requirement_analysis", {})
     result["workflow_verification"] = state.get("verification", {})
     result["policy_decisions"] = state.get("policy_decisions", [])
     return {"result": result, "_trace_detail": "结论、模型与执行轨迹已整理"}
@@ -502,7 +574,9 @@ def _trajectory_state(state: AgentWorkflowState, node_id: str) -> dict[str, Any]
             "episode_id": state["episode_id"],
             "current_node": node_id,
             "question": state["question"],
+            "original_question": state.get("original_question", state["question"]),
             "requested_dataset_id": state.get("requested_dataset_id"),
+            "requirement_analysis": state.get("requirement_analysis"),
             "execution_context": context_snapshot,
             "data_context": state.get("data_context"),
             "problem_spec": state.get("problem_spec"),
@@ -539,7 +613,7 @@ def _trajectory_action(state: AgentWorkflowState, node_id: str) -> dict[str, Any
         "type": action_type,
         "description": description,
         "arguments": {
-            "template_id": problem_spec.get("template_id"),
+            "template_id": problem_spec.get("template_id") or (state.get("requirement_analysis") or {}).get("template_id"),
             "dataset_id": context.dataset_id if context else state.get("requested_dataset_id"),
         },
     }
@@ -568,6 +642,7 @@ def _build_agent_graph(worker_overrides: dict[str, Callable[[AgentWorkflowState]
     """构建固定职责节点，后续可在同一状态合同上加入反馈回路。"""
 
     workers = {
+        "requirements": _requirements_node,
         "planner": _planner_node,
         "data": _data_node,
         "modeler": _modeler_node,
@@ -580,7 +655,15 @@ def _build_agent_graph(worker_overrides: dict[str, Callable[[AgentWorkflowState]
     graph = StateGraph(AgentWorkflowState)
     for node_id, label, description in NODE_DEFINITIONS:
         graph.add_node(node_id, _traced_node(node_id, label, description, workers[node_id]))
-    graph.add_edge(START, "planner")
+    graph.add_edge(START, "requirements")
+    graph.add_conditional_edges(
+        "requirements",
+        _route_after_requirements,
+        {
+            "clarify": "explainer",
+            "proceed": "planner",
+        },
+    )
     graph.add_edge("planner", "data")
     graph.add_edge("data", "modeler")
     graph.add_edge("modeler", "solver")
