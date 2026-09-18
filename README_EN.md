@@ -29,11 +29,11 @@ OptiAgent is evolving into a research platform around **Learning an Agent Policy
 
 UI demo:
 
-![OptiAgent UI Demo](/Users/tianyuanzhe/运筹优化/assets/ui-demo.png)
+![OptiAgent UI Demo](assets/ui-demo.png)
 
 Architecture:
 
-![OptiAgent Architecture](/Users/tianyuanzhe/运筹优化/assets/architecture.png)
+![OptiAgent Architecture](assets/architecture.png)
 
 ## Current Capabilities
 
@@ -75,10 +75,10 @@ User question / uploaded data
 
 ## Repository Highlights
 
-- [README.md](/Users/tianyuanzhe/运筹优化/README.md): Chinese-first main project documentation
-- [examples/README.md](/Users/tianyuanzhe/运筹优化/examples/README.md): quick-start examples for visitors
-- [CHANGELOG.md](/Users/tianyuanzhe/运筹优化/CHANGELOG.md): notable project changes
-- [CONTRIBUTING.md](/Users/tianyuanzhe/运筹优化/CONTRIBUTING.md): contribution guidance
+- [README.md](README.md): Chinese-first main project documentation
+- [examples/README.md](examples/README.md): quick-start examples for visitors
+- [CHANGELOG.md](CHANGELOG.md): notable project changes
+- [CONTRIBUTING.md](CONTRIBUTING.md): contribution guidance
 - [docs/mcp-architecture.md](docs/mcp-architecture.md): MCP contracts, tools, configuration, and security boundaries
 - [docs/agent-workflow.md](docs/agent-workflow.md): observable LangGraph execution and SSE event contract
 - [docs/research-direction.md](docs/research-direction.md): research question, policy formulation, reward design, and experimental roadmap
@@ -120,9 +120,22 @@ http://127.0.0.1:8000
 ## Example Inputs
 
 - Facility location: `data/facility_location_warehouses.csv`, `data/facility_location_customers.csv`, `data/facility_location_costs.csv`
-- Assignment: [examples/assignment_sample.json](/Users/tianyuanzhe/运筹优化/examples/assignment_sample.json)
-- Job shop scheduling: [examples/job_shop_scheduling_sample.json](/Users/tianyuanzhe/运筹优化/examples/job_shop_scheduling_sample.json)
-- Production mix: [examples/production_mix_sample.json](/Users/tianyuanzhe/运筹优化/examples/production_mix_sample.json)
+- Assignment: [examples/assignment_sample.json](examples/assignment_sample.json)
+- Job shop scheduling: [examples/job_shop_scheduling_sample.json](examples/job_shop_scheduling_sample.json)
+- Production mix: [examples/production_mix_sample.json](examples/production_mix_sample.json)
+
+## Recovery-policy training status
+
+The local extension to upstream commit `8f2f19d` includes masked tabular Q-learning and checkpoint continuation. Five seeds completed 5,000 episodes each, then another 10,000 per seed: 75,000 episodes in total, without fine-tuning an LLM.
+
+On 720 synthetic tasks generated with seeds 2000–2009, both the parent and continued policies achieved 75% overall success, 100% success on recoverable tasks, and a mean return of 0.6625, matching the rule baseline. Additional training did not improve these metrics. These are simulated recovery transitions, not real MCP/solver evaluations or evidence of out-of-distribution generalization. Production routing remains rule-based.
+
+```bash
+python scripts/train_recovery_policy.py --output artifacts/rl/recovery-qlearning-v1
+python scripts/train_recovery_policy.py --resume-from artifacts/rl/recovery-qlearning-v1 --output artifacts/rl/recovery-qlearning-v2 --episodes 10000 --test-seed-start 2000
+```
+
+Training requires Python 3.11+ and Pydantic 2. Output directories must be new. Checkpoints remain local under the ignored `artifacts/rl/` directory. Continuation restores Q values and update counts, with a fresh seeded random stream. See the [training report](docs/rl-training-results.md) and [main README](README.md#强化学习训练与续训).
 
 ## Roadmap
 

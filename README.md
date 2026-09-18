@@ -29,6 +29,7 @@ $$
 - [效果图](#效果图)
 - [架构图](#架构图)
 - [研究目标](#研究目标)
+- [强化学习训练与续训](#强化学习训练与续训)
 - [当前能力](#当前能力)
 - [已支持的可执行问题](#已支持的可执行问题)
 - [系统如何工作](#系统如何工作)
@@ -78,7 +79,49 @@ $$
 
 OptiAgent 将优化建模与求解形式化为一个序列决策问题。策略 $\pi_\theta(a_t\mid s_t)$ 根据当前问题、数据画像、建模草案、工具历史和验证反馈选择下一步动作；求解器与验证器提供可执行、可复算的环境反馈。项目计划以规则/LLM 轨迹为起点，逐步加入轨迹数据集、可验证奖励、模仿学习、离线 RL 和在线策略评估。
 
-当前阶段的边界很明确：系统已经具备可观测状态图、MCP 环境、数学验证器、确定性 reward 和版本化 trajectory store，但尚未宣称已训练出 RL policy。研究设计见 [研究方向文档](docs/research-direction.md)，轨迹合同见 [Trajectory 数据文档](docs/trajectory-data.md)。
+当前系统具备可观测状态图、MCP 环境、数学验证器、确定性 reward 和版本化 trajectory store，已在独立模拟恢复环境中完成表格型 Q-learning 训练与检查点续训。生产工作流仍使用确定性 Recovery Policy；实验策略尚未接入真实 MCP / 求解器恢复流程。研究设计见 [研究方向文档](docs/research-direction.md)，轨迹合同见 [Trajectory 数据文档](docs/trajectory-data.md)。
+
+## 强化学习训练与续训
+
+本地实验基于上游提交 `8f2f19d`（`feat: add verifiable recovery policy environment`）。2026-09-18 核对 GitHub 时，该提交仍为 `main` 最新提交；以下训练代码与结果是在此源码基础上的本地增量，原上游提交不包含这些检查点。
+
+学习对象是 `accept_solution`、`retry_solver`、`rebuild_model`、`terminate` 四类高层恢复决策。使用带合法动作 mask 的表格型 Q-learning，通过环境交互和奖励更新 Q 表，不微调大模型，也不需要 LLM API、GPU 或 Gurobi。
+
+### 已完成的实验
+
+- 第一轮：5 个随机种子，各 5,000 回合，共 25,000 回合。
+- 第二轮：加载每个种子的 `last_policy.json`，各追加 10,000 回合，共追加 50,000 回合；累计 75,000 回合。
+- 第二轮实际新增 86,580 次 Q 值更新，累计 127,219 次。
+- 原始 72 个任务划分为训练 48、验证 12、测试 12；只在训练集更新 Q 表，只在验证集选择检查点。
+- 另用种子 2000–2009 生成 720 个模拟任务，冻结策略比较续训前后表现。下表为 5 次运行的均值。
+
+| 策略 | 总成功率 | 可恢复任务成功率 | 平均回报 |
+| --- | ---: | ---: | ---: |
+| 未训练贪心策略 | 50.00% | 66.67% | 0.3625 |
+| 合法动作随机策略 | 46.33% | 61.78% | 0.2046 |
+| 第一轮检查点 | 75.00% | 100.00% | 0.6625 |
+| 第二轮续训策略 | 75.00% | 100.00% | 0.6625 |
+| 固定规则基线 | 75.00% | 100.00% | 0.6625 |
+
+**结论：学习策略达到现有规则基线水平，续训未带来额外提升。** 当前环境的四类故障转移是预设的，其中 25% 为持续失败任务，无法通过任何恢复动作成功；因此 75% 是当前环境的成功率上限。新种子只改变任务标识、排列和数值特征，不代表真实 OR 问题泛化。零非法动作受规则 mask 保障，不能单独归因于学习。完整记录见 [第二轮训练报告](docs/rl-training-results.md)。
+
+### 复现与继续训练
+
+在 Python 3.11+ 环境中，从仓库根目录执行。仅运行该训练实验时，依赖为 Pydantic 2 和 Python 标准库：
+
+```bash
+python -m pip install "pydantic>=2,<3"
+python scripts/train_recovery_policy.py --output artifacts/rl/recovery-qlearning-v1
+python scripts/train_recovery_policy.py --resume-from artifacts/rl/recovery-qlearning-v1 --output artifacts/rl/recovery-qlearning-v2 --episodes 10000 --test-seed-start 2000
+python -m unittest discover -s tests -p "test_q_learning.py"
+python -m unittest discover -s tests -p "test_rl_environment.py"
+```
+
+输出目录必须不存在，以免覆盖历史实验；完整实验产物保存在本地 `artifacts/rl/`，默认不纳入 Git。新检出源码需要先运行第一条训练命令生成父检查点。
+
+每个 `seed-*` 子目录包含 `best_policy.json`、`last_policy.json`、`learning_curve.json`、`continuation.json`、评测结果和测试轨迹；顶层包含任务清单、源码哈希、汇总指标与 `REPORT.md`。续训核对环境和状态编码的源码哈希，并记录父检查点哈希与累计更新数。
+
+续训恢复 Q 表和更新计数，但旧检查点没有随机数状态，因此采用新的确定性随机流，探索率从 0.20 降至 0.05；这属于检查点热启动，不是恢复原随机流。`--episodes` 表示新增回合数。生产策略保持独立，下一步重点是接入真实可执行的模型修复动作和求解反馈，再评估成本、解质量与跨任务泛化。
 
 ## 当前能力
 
@@ -252,20 +295,20 @@ http://127.0.0.1:8000
 
 ## Examples
 
-可直接体验的示例放在 [examples/README.md](/Users/tianyuanzhe/运筹优化/examples/README.md)：
+可直接体验的示例放在 [examples/README.md](examples/README.md)：
 
 - 仓库选址：使用 `data/facility_location_*.csv`
-- 指派问题：使用 [examples/assignment_sample.json](/Users/tianyuanzhe/运筹优化/examples/assignment_sample.json)
-- 作业车间调度：使用 [examples/job_shop_scheduling_sample.json](/Users/tianyuanzhe/运筹优化/examples/job_shop_scheduling_sample.json)
-- 产品组合：使用 [examples/production_mix_sample.json](/Users/tianyuanzhe/运筹优化/examples/production_mix_sample.json)
+- 指派问题：使用 [examples/assignment_sample.json](examples/assignment_sample.json)
+- 作业车间调度：使用 [examples/job_shop_scheduling_sample.json](examples/job_shop_scheduling_sample.json)
+- 产品组合：使用 [examples/production_mix_sample.json](examples/production_mix_sample.json)
 
 如果你是第一次了解这个项目，建议先从 `facility_location` 或 `assignment` 开始，最容易看到完整的上传、建模、求解与结果展示链路。
 
 
 ## Community
 
-- 仓库变更记录见 [CHANGELOG.md](/Users/tianyuanzhe/运筹优化/CHANGELOG.md)
-- 贡献方式见 [CONTRIBUTING.md](/Users/tianyuanzhe/运筹优化/CONTRIBUTING.md)
+- 仓库变更记录见 [CHANGELOG.md](CHANGELOG.md)
+- 贡献方式见 [CONTRIBUTING.md](CONTRIBUTING.md)
 - 如果你也在做 OR Agent、Optimization Copilot、Decision Intelligence 或 Solver + LLM 结合的方向，欢迎基于这个仓库继续扩展
 
 ## 运行依赖

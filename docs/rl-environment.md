@@ -88,3 +88,42 @@ PYTHONPATH=. python scripts/generate_rl_dataset.py \
 ## 研究边界
 
 当前 benchmark 是高层恢复策略的可控微型环境，故障转移是确定性注入，尚未真正调用 MCP 和求解器。它用于验证状态/动作/奖励合同和训练代码，不能代替最终的端到端 OR benchmark。下一版需将故障注入 MCP transport、数据映射和真实 Solver 执行层。
+
+## 第一轮实际训练：表格型 Q-learning
+
+在 Python 3.11+、Pydantic 2 环境，从仓库根目录执行：
+
+```bash
+python scripts/train_recovery_policy.py --output artifacts/rl/recovery-qlearning-v1
+python -m unittest discover -s tests -p 'test_q_learning.py'
+```
+
+训练仅需要标准库与 Pydantic，不调用 LLM API，不需要 GPU 或 Gurobi。
+默认运行 5 个随机种子，每个 5000 个 episode；仅用 train 更新 Q 表，
+每 250 个 episode 用 validation 选择检查点，随后冻结策略评测 test 和 720 个新种子任务。
+使用合法动作 mask、epsilon-greedy 探索及 Bellman 更新；不是复制规则动作的监督学习。
+状态编码不读取任务 ID、split 或隐藏故障场景；也不使用与当前转移无关的随机数值特征。
+
+输出包括 best/last 检查点、训练曲线、任务清单、源码摘要、测试轨迹及 REPORT.md。
+输出目录必须不存在，以防覆盖历史实验。增加实验时使用新的输出目录。
+加载检查点后可直接作为 `evaluate_policy` 的 callable policy：
+
+```python
+from optiagent.rl.q_learning import QLearningPolicy
+policy = QLearningPolicy.load('artifacts/rl/recovery-qlearning-v1/seed-11/best_policy.json')
+```
+
+该策略只适用于当前模拟环境的状态合同，未接入生产 Recovery Policy。
+新种子评测复用同一组转移机制，不能证明真实 OR 泛化；原规则已达到此环境上限。
+
+### 从检查点继续训练
+
+```bash
+python scripts/train_recovery_policy.py --resume-from artifacts/rl/recovery-qlearning-v1 --output artifacts/rl/recovery-qlearning-v2 --episodes 10000 --test-seed-start 2000
+```
+
+该命令加载每个种子的 `last_policy.json`，保留 Q 表与累计更新数。
+续训前核对父实验的环境和编码器源码哈希，记录父检查点 SHA-256；测试包含冻结的父策略以便比较。
+旧检查点没有随机数状态，因此续训采用新随机流与 0.20 → 0.05 探索率，属于热启动。
+验证集选最优平均回报，同分保留较新的检查点；若续训退化可保留父策略。
+结果和边界见 [续训报告](rl-training-results.md)。

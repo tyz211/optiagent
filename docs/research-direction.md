@@ -161,4 +161,6 @@ $$
 
 ## 11. 项目定位边界
 
+2026-09-18 实验进展：已在独立模拟环境中完成表格型 Q-learning 与检查点续训，累计 75,000 回合，表现与规则基线持平。该结果仅支持“模拟恢复环境中的 learned policy”，不表示生产工作流已由学习策略驱动，也不证明真实 OR 泛化。详见 [训练报告](rl-training-results.md)。
+
 OptiAgent 不把 RL 作为装饰性标签。只有在 episode schema、reward、训练方法、对照基线和独立测试集都落地后，项目才会声明具备“learned policy”。在此之前，准确表述是：**一个为 Agent policy learning 准备的、可观测且可验证的自动优化建模与求解环境。**
