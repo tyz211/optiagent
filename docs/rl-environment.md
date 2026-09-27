@@ -94,11 +94,12 @@ PYTHONPATH=. python scripts/generate_rl_dataset.py \
 以下保留 2026-09-18 的合成环境训练合同；整合后使用独立的表格训练入口。从仓库根目录执行：
 
 ```bash
+# 从项目环境运行已整合的表格基线。
 .venv/bin/python scripts/train_tabular_recovery_policy.py --output artifacts/rl/recovery-qlearning-v1
 .venv/bin/python -m unittest discover -s tests -p 'test_q_learning.py'
 ```
 
-训练仅需要标准库与 Pydantic，不调用 LLM API，不需要 GPU 或 Gurobi。
+当前仓库先安装 `requirements-demo.lock`，以满足统一包的导入依赖；表格训练本身不调用 LLM API、GPU 或求解器。
 默认运行 5 个随机种子，每个 5000 个 episode；仅用 train 更新 Q 表，
 每 250 个 episode 用 validation 选择检查点，随后冻结策略评测 test 和 720 个新种子任务。
 使用合法动作 mask、epsilon-greedy 探索及 Bellman 更新；不是复制规则动作的监督学习。
@@ -120,6 +121,7 @@ policy = QLearningPolicy.load('artifacts/rl/recovery-qlearning-v1/seed-11/best_p
 ### 从检查点继续训练
 
 ```bash
+# 使用新目录续训，保留父检查点。
 .venv/bin/python scripts/train_tabular_recovery_policy.py --resume-from artifacts/rl/recovery-qlearning-v1 --output artifacts/rl/recovery-qlearning-v2 --episodes 10000 --test-seed-start 2000
 ```
 

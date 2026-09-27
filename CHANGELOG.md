@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - Added pinned core/RL dependency closures for the Python 3.14 macOS arm64 baseline and a unified acceptance runner with isolated databases, dialogue checks and HTTP/SSE repair checks.
 - Added deterministic source archives that include in-scope uncommitted modules, per-file hashes and optional fixed research checkpoints, while excluding user data and local credentials.
 - Documented model provenance, archive verification and fresh-environment setup; synchronized Chinese/English delivery guidance and made development reload opt-in.
+- Reconciled the parallel upstream tabular-training history while preserving separate DQN and tabular entry points; clarified fresh-clone setup, checkpoint availability, current study limits and completed roadmap items in both READMEs.
 
 ### Added
 

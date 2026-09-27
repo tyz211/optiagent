@@ -4,13 +4,17 @@
 
 > A local-first optimization agent for operations research workflows, combining natural language understanding, structured modeling, RAG, solver execution, and explainable results.
 
-![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.14%20tested-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white)
 ![Gurobi](https://img.shields.io/badge/Gurobi-Optimizer-E87722)
 ![RAG](https://img.shields.io/badge/RAG-Knowledge%20Augmented-4A90E2)
 ![LangChain](https://img.shields.io/badge/LangChain-Agent%20Tools-1C3C3C)
 ![SQLite](https://img.shields.io/badge/SQLite-Local%20Storage-003B57?logo=sqlite&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
+
+[English](README_EN.md) · [快速开始](#快速开始) · [复现与验收](docs/reproducible-release.md)
+
+**当前阶段：可交互的本地研究 Demo。** 已完成六类模板求解、独立数学验算、多轮数据修订和恢复策略受控实验；通用约束编译、真实业务泛化验证和 LLM SFT/GRPO 尚未完成。默认演示无需 LLM API Key。
 
 该项目尝试把 **自然语言理解、结构化建模、RAG、工具路由、求解器执行、结果验证与策略学习** 串成一条完整闭环，让用户可以像和分析助手对话一样提出优化问题，并得到可审计、可解释、可执行的求解结果。
 
@@ -30,11 +34,22 @@ $$
 
 ### 可复现交付版本：demo-2026.09.27
 
-完整交付包包含当前源码、固定依赖清单及两份经过 SHA256 校验的恢复策略权重。基线环境为 Python 3.14 / macOS arm64；安装 `requirements-rl.lock` 后，运行 `.venv/bin/python scripts/verify_demo.py --profile full` 统一验收依赖、源码、回归、七轮对话和 HTTP/SSE 修复流程。仅运行规则模式时使用 `requirements-demo.lock` 与 `--profile core`，无需 PyTorch 或 LLM API Key。
+基线环境为 **Python 3.14 / macOS arm64**。本次本地验收：基础模式 97 项测试、完整模式 131 项测试均通过，七轮真实对话和 HTTP/SSE 修复流程通过。这是本地验收结果，不是 GitHub CI 状态；其他平台尚未验证。
+
+| 获取方式 | 包含内容 | 验收模式 |
+| --- | --- | --- |
+| 克隆本仓库 | 源码、示例、依赖锁和测试；不含权重 | 安装 `requirements-demo.lock`，执行 `--profile core` |
+| 完整本地交付包 | 源码快照与两份校验过的恢复权重 | 安装 `requirements-rl.lock`，执行 `--profile full` |
+
+模型与交付压缩包未提交到 Git，本仓库当前没有公开模型下载地址。新克隆可直接体验规则模式；完整模式需要另行取得交付包中的固定权重。自行训练得到的权重属于新实验，不能替代本版固定摘要验收。
 
 新环境安装、交付包生成、模型来源、校验方法及支持边界见 [可复现交付说明](docs/reproducible-release.md)。本版本固定的是本地 Demo，SFT/GRPO 与真实业务验证仍属于后续工作。
 
 ## 目录
+
+- [当前 Demo 交付入口](#当前-demo-交付入口)
+- [快速开始](#快速开始)
+- [验证命令](#验证命令)
 - [Who Is This For](#who-is-this-for)
 - [典型使用场景](#典型使用场景)
 - [项目的优势](#项目的优势)
@@ -46,12 +61,12 @@ $$
 - [系统如何工作](#系统如何工作)
 - [CSV 处理策略](#csv-处理策略)
 - [工具体系](#工具体系)
-- [快速开始](#快速开始)
 - [Examples](#examples)
 - [Roadmap](#roadmap)
 - [Community](#community)
 - [项目结构](#项目结构)
 - [数据示例](#数据示例)
+- [训练 Recovery Policy](#训练-recovery-policy)
 
 ## Who Is This For
 
@@ -93,6 +108,8 @@ OptiAgent 的长期方向由两条相互闭环的主线组成：第一部分是�
 两部分的训练对象不同：当前 BC + Masked Double DQN 学习结构化状态上的高层 Agent 动作；未来 GRPO 学习的是开源语言模型的 token/结构化输出策略。项目早期将交替固定其中一侧进行训练，避免 Agent 与模型同时更新造成非平稳训练。
 
 当前已实现 BC + Masked Double DQN 训练，并将 29/35 维 checkpoint 接入主 LangGraph 的恢复节点，支持动作约束、异常回退与实际决策轨迹导出。40 维 transport-aware 策略仍在独立环境评测，待补齐主流程连接观测后接入。训练使用 validation 选择 checkpoint，单独保留 BC、末轮 DQN 与测试指标；这些小规模受控实验不代表已学会通用优化建模。
+
+离线恢复策略另外提供 BC + Masked CQL。较早的受控实验减少了建模调用；加入持续映射错误后，新策略的可恢复成功率达到规则基线，但没有证明成本优于规则。学习动作目前主要是接受、重试、重建和终止；修复演示中的字段重新绑定由确定性修复器执行。
 
 完整的双主线架构、数据闭环、训练边界与里程碑见 [双主线总体路线](docs/two-track-roadmap.md)。
 
@@ -240,40 +257,36 @@ OptiAgent 的长期方向由两条相互闭环的主线组成：第一部分是�
 
 ## 快速开始
 
-推荐使用启动脚本：
+以下为新克隆仓库的规则模式，在 Python 3.14 / macOS arm64 上验收。六类模板的完整求解验收需要当前机器具备可用的 Gurobi 许可；Python、依赖安装包与许可证不包含在仓库中。
 
 ```bash
-./start.sh
-```
+# 已有本地项目时跳过克隆与切换目录。
+git clone https://github.com/tyz211/optiagent.git
+cd optiagent
 
-指定端口：
-
-```bash
-PORT=8010 ./start.sh
-```
-
-首次运行：
-
-```bash
-# 使用交付版本的固定依赖；完整学习策略演示改用 requirements-rl.lock。
+# 创建独立环境并安装固定版本，无需激活环境或安装 PyTorch。
 python3.14 -m venv .venv
 .venv/bin/python -m pip install -r requirements-demo.lock
 .venv/bin/python scripts/verify_demo.py --profile core
+./start.sh
 ```
 
-开发环境仍可使用 `requirements.txt` 的宽版本范围，但不代表已通过本版复现验收。启动脚本默认单进程，开发热重载使用 `RELOAD=1 ./start.sh`。
+打开终端显示的地址（默认 `http://127.0.0.1:8000`，端口占用时自动顺延）。主页面新建对话后点击「载入背包演示数据」并发送；`/repair-demo` 可体验规则恢复。没有配置权重时，学习策略选项会禁用。
 
-手动启动：
+常用启动方式：
 
 ```bash
-uvicorn api.main:app --reload --host 127.0.0.1 --port 8000
+# 指定端口；默认单进程、不启用热重载。
+PORT=8010 ./start.sh
+
+# 开发时显式启用热重载。
+RELOAD=1 ./start.sh
+
+# 手动启动也使用项目环境中的解释器。
+.venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
 ```
 
-浏览器打开：
-
-```text
-http://127.0.0.1:8000
-```
+开发环境可使用 `requirements.txt` 的宽版本范围，但不代表已通过固定版本验收。完整学习策略演示的权重来源与安装步骤见 [可复现交付说明](docs/reproducible-release.md)。
 
 ## Examples
 
@@ -295,7 +308,7 @@ http://127.0.0.1:8000
 
 ## 运行依赖
 
-- Python 3.11+
+- 交付验收：Python 3.14 / macOS arm64；其他环境需另行验证
 - FastAPI / Uvicorn
 - pandas / numpy
 - gurobipy
@@ -304,7 +317,7 @@ http://127.0.0.1:8000
 - openpyxl / xlrd / pypdf / python-docx（Document/Data MCP 文件解析）
 - SQLite
 
-如果本机没有有效 Gurobi license，相关模板会返回不可用状态
+如果本机没有有效 Gurobi license，依赖它的模板无法完成求解；TSP 与调度的部分路径有独立算法或启发式回退。这不等同于六类模板的完整验收通过。
 
 ## 项目结构
 
@@ -479,8 +492,10 @@ MCP 配置留空时，启用 LLM 的 Agent 会使用当前 Python 环境自动�
 ## 验证命令
 
 ```bash
-# 统一验收；完整交付包且已安装 RL 依赖时使用 full。
+# 新克隆仓库的基础验收，不依赖 PyTorch 或权重。
 .venv/bin/python scripts/verify_demo.py --profile core
+
+# 仅在安装 requirements-rl.lock 且两份固定权重齐全后执行。
 .venv/bin/python scripts/verify_demo.py --profile full
 ```
 
@@ -489,7 +504,8 @@ MCP 配置留空时，启用 LLM 的 Agent 会使用当前 Python 环境自动�
 ## 生成 RL baseline 轨迹
 
 ```bash
-PYTHONPATH=. python scripts/generate_rl_dataset.py --output data/rl/baseline.jsonl
+# 从项目根目录生成可重复的基线轨迹。
+PYTHONPATH=. .venv/bin/python scripts/generate_rl_dataset.py --output data/rl/baseline.jsonl
 ```
 
 ## 训练 Recovery Policy
@@ -507,8 +523,7 @@ GitHub 上游的表格型 Q-learning 已作为独立基线整合，避免与神�
 ```
 
 此入口只训练合成环境中的 Q 表，不更新 LLM 权重，也不自动接入线上恢复节点。
-历史训练结果见 [上游训练报告](docs/rl-training-results.md)，当前分支状态与下一阶段验收标准见
-[项目状态与执行计划](docs/project-status-2026-09-19.md)。
+历史训练结果见 [上游训练报告](docs/rl-training-results.md)。[09-19 状态记录](docs/project-status-2026-09-19.md) 保留当时的分支与实验情况；其中本地/远端分叉描述是历史状态。
 
 ### 神经网络恢复策略
 
@@ -517,7 +532,7 @@ GitHub 上游的表格型 Q-learning 已作为独立基线整合，避免与神�
 默认使用 240/120/120 个训练/验证/测试实例，以及 120 个外部测试实例；详细命令、指标与边界见
 [离线多种子研究流程](docs/offline-study.md)。
 
-面向完整 Demo 的下一阶段增加了实际系数映射修复：错误输入真正进入求解器，
+后续已完成实际系数映射修复实验：错误输入真正进入求解器，
 再依据原始数据独立验算；持续错误必须重建映射后才能恢复。
 训练计划、复现命令与交互回放生成方法见 [修复 Demo 训练计划](docs/repair-demo-training.md)。
 
@@ -528,9 +543,12 @@ GitHub 上游的表格型 Q-learning 已作为独立基线整合，避免与神�
 收益集中在预设的目标不一致恢复场景，不代表通用模型修复或真实线上成本收益。
 数据规模、逐种子结果和验收边界见 [完整实验报告](docs/offline-study-results.md)。
 
+后续数据修复实验使用 60 个新的外部实例、五个训练种子：旧模型可恢复成功率为 79.17%，新 CQL 策略达到 100%，与规则持平；两者平均建模调用均为 1.600 次，原成本改善门槛未通过。该实验通过的是修复可靠性门槛，不能把上一轮 13.90% 的调用改善继续套用到它上面。[修复实验结果](docs/repair-demo-training.md)
+
 ```bash
-pip install -r requirements-rl.txt
-python scripts/train_recovery_policy.py
+# 神经网络训练需可选 RL 依赖；训练输出不覆盖本版固定权重。
+.venv/bin/python -m pip install -r requirements-rl.lock
+.venv/bin/python scripts/train_recovery_policy.py
 ```
 
 每次训练都会创建独立的 `run_id`，并在 `artifacts/rl/runs/` 中保存 manifest、checkpoint、完整报告和追加式历史索引；成功和失败运行都不会覆盖旧记录。
@@ -575,13 +593,15 @@ export OPTIAGENT_RECOVERY_CHECKPOINT="/absolute/path/to/recovery_policy.pt"
 训练真实 Gateway 成本感知策略：
 
 ```bash
-python scripts/train_real_recovery_policy.py --seed 47 --episodes 1200
+# 采集真实求解结果并训练成本感知策略。
+.venv/bin/python scripts/train_real_recovery_policy.py --seed 47 --episodes 1200
 ```
 
 训练真实 MCP stdio 故障恢复策略：
 
 ```bash
-python scripts/train_mcp_transport_policy.py \
+# 在隔离 MCP 子进程中采集受控故障。
+.venv/bin/python scripts/train_mcp_transport_policy.py \
   --seed 52 \
   --episodes 1500 \
   --bc-epochs 180
@@ -592,15 +612,16 @@ python scripts/train_mcp_transport_policy.py \
 ## 运行真实端到端 Benchmark
 
 ```bash
-PYTHONPATH=. python scripts/run_e2e_benchmark.py --output data/benchmarks/e2e-smoke.json
+# 从项目根目录验证六类模板及异常检测。
+PYTHONPATH=. .venv/bin/python scripts/run_e2e_benchmark.py --output data/benchmarks/e2e-smoke.json
 ```
 
 ## Roadmap
 
 - 完善多轮需求 Agent：支持显式修改/删除约束、方案确认、what-if 分支和会话摘要压缩。
 - 建立对话 policy 评测集，测量澄清轮数、需求覆盖率、无效工具调用率与最终求解成功率。
-- 构建 optimization-agent trajectory 数据集，记录状态、动作、工具观察与终局结果。
-- 实现确定性的 Solution Verifier，把约束违反、目标值复算和求解状态变成奖励信号。
+- 扩充已有 trajectory 数据集，采集真实用户需求变更和失败—修复记录。
+- 在已有 Solution Verifier 上增加新的问题类型、错误机制与验证覆盖。
 - 将已实现的 Rule、Random Valid 和 BC + Masked Double DQN 扩展到远程 Streamable HTTP MCP 与生产轨迹。
 - 学习高层工具路由与失败恢复策略，先不直接学习求解器内部搜索。
 - 加入预算约束下的 solver portfolio routing，联合优化正确率、解质量、延迟和调用成本。
