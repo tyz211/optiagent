@@ -170,4 +170,6 @@ $$
 
 ## 11. 项目定位边界
 
+历史实验（2026-09-18）：表格型 Q-learning 与检查点续训累计完成 75,000 回合，在独立合成恢复环境中与规则基线持平。该结果不证明真实 OR 泛化；当前神经网络工作流集成与后续实验应分别评估。详见 [历史训练报告](rl-training-results.md)。
+
 OptiAgent 已具备 episode schema、reward、BC + Masked Double DQN、对照基线、test split 和真实 MCP stdio 故障轨迹，并已将 29/35 维 checkpoint 接入主 LangGraph。40 维 transport-aware 策略尚在独立环境评测。在覆盖 LLM 建模动作并通过更大规模、实例内容去重的未见 OR 测试之前，不宣称已实现“通用 RL Optimization Agent”。
