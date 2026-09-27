@@ -87,4 +87,4 @@ PYTHONPATH=. python scripts/generate_rl_dataset.py \
 
 ## 研究边界
 
-`OptimizationAgentEnv` 是高层恢复策略的可控微型环境，其故障转移仍是确定性注入。项目另外提供 [E2E Benchmark](e2e-test-plan.md)，并新增 `MCPTransportRecoveryEnv`：它通过真实 MCP stdio 进程和 ClientSession 采集正常、超时、断连与非法结构返回，再将这些观测组合为 90 个训练/验证/测试任务。当前尚未覆盖远程 Streamable HTTP 网络抖动、生产 LLM 错误和端到端 LangGraph 在线决策。
+`OptimizationAgentEnv` 是高层恢复策略的可控微型环境，其故障转移仍是确定性注入。项目另外提供 [E2E Benchmark](e2e-test-plan.md) 和 `MCPTransportRecoveryEnv`，后者通过真实 MCP stdio 进程采集正常、超时、断连与非法结构返回。29/35 维 checkpoint 已可在主 LangGraph 做贪心恢复决策，主流程集成评测使用真实求解与受控验证反馈。远程 Streamable HTTP、生产 LLM 错误和主流程在线探索训练尚未完成。

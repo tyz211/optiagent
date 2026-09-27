@@ -22,6 +22,18 @@ $$
 
 重点不只是让 LLM “生成一个模型”，而是学习一个可评估、可改进的 Agent policy，使系统能在澄清、检索、建模、工具选择、求解、验证和修复之间作出序列决策。完整定义见 [研究方向文档](docs/research-direction.md)。
 
+## 当前 Demo 交付入口
+
+运行 `./start.sh`，打开主对话页，新建对话后点击「载入背包演示数据」。现已支持有效输入版本、背包容量修改、先保存不求解、继续求解、撤销修改、已验算方案对比和记录下载。五类内联 JSON 模板可跨轮复用或替换完整数据；仓库选址沿用三表入口。详细操作范围、验收步骤和已知限制见 [Demo 交付说明](docs/demo-release.md)。
+
+独立验收命令：`.venv/bin/python scripts/run_dialogue_demo.py`。它在临时数据库中执行七轮真实对话和求解，不修改已有会话。实时修复演示入口为 `/repair-demo`。
+
+### 可复现交付版本：demo-2026.09.27
+
+完整交付包包含当前源码、固定依赖清单及两份经过 SHA256 校验的恢复策略权重。基线环境为 Python 3.14 / macOS arm64；安装 `requirements-rl.lock` 后，运行 `.venv/bin/python scripts/verify_demo.py --profile full` 统一验收依赖、源码、回归、七轮对话和 HTTP/SSE 修复流程。仅运行规则模式时使用 `requirements-demo.lock` 与 `--profile core`，无需 PyTorch 或 LLM API Key。
+
+新环境安装、交付包生成、模型来源、校验方法及支持边界见 [可复现交付说明](docs/reproducible-release.md)。本版本固定的是本地 Demo，SFT/GRPO 与真实业务验证仍属于后续工作。
+
 ## 目录
 - [Who Is This For](#who-is-this-for)
 - [典型使用场景](#典型使用场景)
@@ -80,7 +92,7 @@ OptiAgent 的长期方向由两条相互闭环的主线组成：第一部分是�
 
 两部分的训练对象不同：当前 BC + Masked Double DQN 学习结构化状态上的高层 Agent 动作；未来 GRPO 学习的是开源语言模型的 token/结构化输出策略。项目早期将交替固定其中一侧进行训练，避免 Agent 与模型同时更新造成非平稳训练。
 
-当前已在可控 Recovery Benchmark 上训练出第一个 BC + Masked Double DQN policy，并逐步扩展到六类真实 Gateway/Solver/Verifier 结果和真实 MCP stdio 故障轨迹。最新 40 维 transport-aware 策略能够区分正常返回、超时、子进程断连和非法结构返回，在独立 test split 上恢复全部可恢复任务且非法动作率为 0。它尚未接管生产 LangGraph，也不代表已学会通用优化建模；更准确的定位是“已打通真实工具故障采集与策略学习闭环的可验证 Optimization Agent 原型”。
+当前已实现 BC + Masked Double DQN 训练，并将 29/35 维 checkpoint 接入主 LangGraph 的恢复节点，支持动作约束、异常回退与实际决策轨迹导出。40 维 transport-aware 策略仍在独立环境评测，待补齐主流程连接观测后接入。训练使用 validation 选择 checkpoint，单独保留 BC、末轮 DQN 与测试指标；这些小规模受控实验不代表已学会通用优化建模。
 
 完整的双主线架构、数据闭环、训练边界与里程碑见 [双主线总体路线](docs/two-track-roadmap.md)。
 
@@ -243,10 +255,13 @@ PORT=8010 ./start.sh
 首次运行：
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+# 使用交付版本的固定依赖；完整学习策略演示改用 requirements-rl.lock。
+python3.14 -m venv .venv
+.venv/bin/python -m pip install -r requirements-demo.lock
+.venv/bin/python scripts/verify_demo.py --profile core
 ```
+
+开发环境仍可使用 `requirements.txt` 的宽版本范围，但不代表已通过本版复现验收。启动脚本默认单进程，开发热重载使用 `RELOAD=1 ./start.sh`。
 
 手动启动：
 
@@ -262,20 +277,20 @@ http://127.0.0.1:8000
 
 ## Examples
 
-可直接体验的示例放在 [examples/README.md](/Users/tianyuanzhe/运筹优化/examples/README.md)：
+可直接体验的示例放在 [examples/README.md](examples/README.md)：
 
 - 仓库选址：使用 `data/facility_location_*.csv`
-- 指派问题：使用 [examples/assignment_sample.json](/Users/tianyuanzhe/运筹优化/examples/assignment_sample.json)
-- 作业车间调度：使用 [examples/job_shop_scheduling_sample.json](/Users/tianyuanzhe/运筹优化/examples/job_shop_scheduling_sample.json)
-- 产品组合：使用 [examples/production_mix_sample.json](/Users/tianyuanzhe/运筹优化/examples/production_mix_sample.json)
+- 指派问题：使用 [examples/assignment_sample.json](examples/assignment_sample.json)
+- 作业车间调度：使用 [examples/job_shop_scheduling_sample.json](examples/job_shop_scheduling_sample.json)
+- 产品组合：使用 [examples/production_mix_sample.json](examples/production_mix_sample.json)
 
 如果你是第一次了解这个项目，建议先从 `facility_location` 或 `assignment` 开始，最容易看到完整的上传、建模、求解与结果展示链路。
 
 
 ## Community
 
-- 仓库变更记录见 [CHANGELOG.md](/Users/tianyuanzhe/运筹优化/CHANGELOG.md)
-- 贡献方式见 [CONTRIBUTING.md](/Users/tianyuanzhe/运筹优化/CONTRIBUTING.md)
+- 仓库变更记录见 [CHANGELOG.md](CHANGELOG.md)
+- 贡献方式见 [CONTRIBUTING.md](CONTRIBUTING.md)
 - 如果你也在做 OR Agent、Optimization Copilot、Decision Intelligence 或 Solver + LLM 结合的方向，欢迎基于这个仓库继续扩展
 
 ## 运行依赖
@@ -464,10 +479,12 @@ MCP 配置留空时，启用 LLM 的 Agent 会使用当前 Python 环境自动�
 ## 验证命令
 
 ```bash
-python3 -m unittest discover -s tests
-python3 -m compileall api optiagent
-node --check web/app.js
+# 统一验收；完整交付包且已安装 RL 依赖时使用 full。
+.venv/bin/python scripts/verify_demo.py --profile core
+.venv/bin/python scripts/verify_demo.py --profile full
 ```
+
+两种模式按实际安装范围选择一个。完整模式要求模型摘要一致并执行全部测试；报告写入新的 `artifacts/validation/` 子目录，不覆盖已有记录或用户数据库。
 
 ## 生成 RL baseline 轨迹
 
@@ -477,12 +494,83 @@ PYTHONPATH=. python scripts/generate_rl_dataset.py --output data/rl/baseline.jso
 
 ## 训练 Recovery Policy
 
+### 表格型 Q-learning 基线与续训
+
+GitHub 上游的表格型 Q-learning 已作为独立基线整合，避免与神经网络训练入口冲突：
+
+```bash
+# 从头训练表格策略，输出目录必须尚不存在。
+.venv/bin/python scripts/train_tabular_recovery_policy.py --output artifacts/rl/tabular-v1
+# 延续 Q 表和更新计数；使用新的确定性随机流，不等同于精确恢复中断现场。
+.venv/bin/python scripts/train_tabular_recovery_policy.py \
+  --resume-from artifacts/rl/tabular-v1 --output artifacts/rl/tabular-v2 --episodes 10000
+```
+
+此入口只训练合成环境中的 Q 表，不更新 LLM 权重，也不自动接入线上恢复节点。
+历史训练结果见 [上游训练报告](docs/rl-training-results.md)，当前分支状态与下一阶段验收标准见
+[项目状态与执行计划](docs/project-status-2026-09-19.md)。
+
+### 神经网络恢复策略
+
+扩大实例覆盖与五种子独立评测的编排入口为 `scripts/run_offline_study.py`。
+它在采集前冻结实例清单、模板配额、源码摘要和训练配置，随后采集轨迹、训练并在独立实例上评测。
+默认使用 240/120/120 个训练/验证/测试实例，以及 120 个外部测试实例；详细命令、指标与边界见
+[离线多种子研究流程](docs/offline-study.md)。
+
+面向完整 Demo 的下一阶段增加了实际系数映射修复：错误输入真正进入求解器，
+再依据原始数据独立验算；持续错误必须重建映射后才能恢复。
+训练计划、复现命令与交互回放生成方法见 [修复 Demo 训练计划](docs/repair-demo-training.md)。
+
+现在也可启动现有 Web 服务，进入 `/repair-demo` 或主对话页的「实时修复演示」。页面支持六类问题、五种场景，以及规则 / 上一轮模型 / 新修复模型的现场对比，实时显示映射变化、求解与独立验算，并可下载结果。每次运行使用独立进程和临时数据库；没有 LLM 调用，不写入普通对话历史。模型缺失会明确提示，可选择规则策略体验。启动方法、检查点配置与演示步骤见 [实时修复 Demo](docs/live-repair-demo.md)。
+
+已完成五种子、120 个外部实例的受控评测：验证选中 CQL 的平均建模调用为 1.205 次，
+相比规则减少 13.90%、相比 BC 减少 6.76%，可恢复成功率保持 100%。
+收益集中在预设的目标不一致恢复场景，不代表通用模型修复或真实线上成本收益。
+数据规模、逐种子结果和验收边界见 [完整实验报告](docs/offline-study-results.md)。
+
 ```bash
 pip install -r requirements-rl.txt
 python scripts/train_recovery_policy.py
 ```
 
 每次训练都会创建独立的 `run_id`，并在 `artifacts/rl/runs/` 中保存 manifest、checkpoint、完整报告和追加式历史索引；成功和失败运行都不会覆盖旧记录。
+
+训练报告现在包含独立 `bc_policy`、`dqn_final_policy` 和验证集选出的 `learned_policy`。同分保留更早的 checkpoint，因此 `recovery_policy.pt` 可能来自 BC 阶段；请查看 `training.selection.selected_stage`，不要把全部收益归因于 DQN。`bc_policy.pt` 和 `dqn_final_policy.pt` 同时保存以便复核。
+
+将验证过的 v1/v2 checkpoint 用于 Web 主流程：
+
+```bash
+# 替换为本次训练输出的实际路径，再启动服务。
+export OPTIAGENT_RECOVERY_CHECKPOINT="/absolute/path/to/recovery_policy.pt"
+./start.sh
+```
+
+未配置时使用规则策略。Python 调用 `run_agent_workflow(..., recovery_checkpoint="")` 可显式选择规则；配置不存在或不兼容的 checkpoint 会报错，运行时推理异常或非法动作则回退规则并记入轨迹。更完整的训练与主流程评测命令见 [学习策略文档](docs/learning-policy.md)。
+
+当前真实恢复数据集已升级为 `gateway-recovery-v2.0`：按实例内容指纹隔离 train/validation/test，同一实例的不同故障场景始终属于同一集合。训练入口通过 `--instances-per-split` 控制每类问题在每个集合中的独立实例数，默认 4，对应 72 个实例、360 个故障任务。缺少实例内容、指纹不匹配或跨集合重复的数据会被拒绝训练。
+
+生产轨迹可按用户范围只读导出，输出独立 JSONL、文件摘要和隔离清单：
+
+```bash
+# 默认仅导出匿名用户；登录用户用 --user-id 指定范围，目标目录必须不存在。
+.venv/bin/python scripts/export_workflow_dataset.py \
+  --db data/optiagent.sqlite3 \
+  --output-dir artifacts/rl/datasets/my_live_dataset --seed 56
+```
+
+导出文件移除问题原文与错误文本，保留状态编码所需数值、实际动作和稀疏终局奖励。真实运行与受控评测分别标记，不能混为生产失败样本；详细质量门槛见 [轨迹数据合同](docs/trajectory-data.md)。
+
+离线训练入口读取经过校验的固定数据集，执行 BC 预热和带合法动作约束的离散 CQL，不运行环境交互：
+
+```bash
+# 默认将奖励转换为验证成功 +1 / 失败 -1，再扣除已记录的恢复动作成本。
+.venv/bin/python scripts/train_offline_policy.py \
+  --dataset artifacts/rl/datasets/my_dataset \
+  --seed 57 --steps 1500 --bc-epochs 160 --cql-alpha 0.1 \
+  --reward-mode verified_cost
+```
+
+也可用 `--reward-mode sparse` 保留原始稀疏奖励。输出包含 BC、末轮 CQL、验证选中模型、奖励版本、数据摘要及日志诊断；这些诊断不代表新策略成功率。验证和测试集合必须非空，部署前仍需运行独立主流程评测。使用方法与边界见 [学习策略文档](docs/learning-policy.md)。
 
 训练真实 Gateway 成本感知策略：
 

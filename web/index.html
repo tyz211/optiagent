@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>OptiAgent</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260909-dialogue-agent" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260923-dialogue-revisions-3" />
   </head>
   <body>
     <main class="app-shell">
@@ -51,6 +51,8 @@
             <span>通过多轮对话分析需求、建模、求解与验证</span>
           </div>
           <div class="top-actions">
+            <button id="newChatBtn">新对话</button>
+            <a href="/repair-demo" class="repair-demo-link">实时修复演示</a>
             <button data-panel="uploadPanel">数据</button>
             <button data-panel="llmPanel">模型</button>
             <button data-panel="mcpPanel">MCP</button>
@@ -134,12 +136,12 @@
               <button data-panel="uploadPanel" class="icon-button">+</button>
               <button data-panel="llmPanel">模型 <span id="llmState">未配置</span></button>
               <span id="runStatus" class="run-status">准备就绪</span>
-              <button id="askBtn" class="send-button">↑</button>
+              <button id="askBtn" class="send-button" aria-label="发送消息">↑</button>
             </div>
           </div>
         </section>
       </section>
     </main>
-    <script src="/static/app.js?v=20260907-agent-policy"></script>
+    <script src="/static/app.js?v=20260923-dialogue-revisions-3"></script>
   </body>
 </html>

@@ -91,4 +91,9 @@ fi
 echo "访问地址：http://${HOST}:${PORT}"
 echo "按 Ctrl+C 停止服务。"
 
-exec "$PYTHON_BIN" -m uvicorn api.main:app --host "$HOST" --port "$PORT" --reload
+# 本地交付默认单进程；开发时显式开启热重载。
+UVICORN_ARGS=(api.main:app --host "$HOST" --port "$PORT")
+if [[ "${RELOAD:-0}" == "1" ]]; then
+  UVICORN_ARGS+=(--reload)
+fi
+exec "$PYTHON_BIN" -m uvicorn "${UVICORN_ARGS[@]}"

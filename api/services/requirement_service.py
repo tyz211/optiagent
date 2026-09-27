@@ -50,6 +50,9 @@ def build_clarification_result(
     requested_dataset_id: int | None,
     user_id: int | None,
     conversation_id: int | None,
+    response_status: str = "NEEDS_CLARIFICATION",
+    message: str | None = None,
+    comparison: dict | None = None,
 ) -> dict:
     """把未完成需求转换为兼容聊天界面的结构化追问并记录本轮。"""
 
@@ -63,6 +66,11 @@ def build_clarification_result(
             *[f"{index}. {item}" for index, item in enumerate(questions, start=1)],
         ]
     )
+    # 比较与仅保存修改也结束当前轮次，但不触发求解器。
+    if message is not None:
+        conclusion = message
+        answer = message
+        questions = []
     result = {
         "answer": answer,
         "structured_answer": {
@@ -76,7 +84,7 @@ def build_clarification_result(
                 ],
             },
             "recommendations": questions,
-            "risks": ["在目标、约束或数据未确认前调用求解器，可能得到错误但形式完整的方案。"],
+            "risks": ["在目标、约束或数据未确认前调用求解器，可能得到错误但形式完整的方案。"] if message is None else [],
             "evidence": [*brief.known_facts[:3], *brief.data_sources[:3]],
             "raw_answer": answer,
         },
@@ -86,7 +94,8 @@ def build_clarification_result(
         "rag_context": {},
         "generic_result": None,
         "question": question,
-        "status": "NEEDS_CLARIFICATION",
+        "status": response_status,
+        "plan_comparison": comparison,
         "objective_value": None,
         "transport_cost": None,
         "fixed_cost": None,
@@ -107,10 +116,10 @@ def build_clarification_result(
             {
                 "step": "求解门控",
                 "tool": "requirement_gate",
-                "output": "信息不足，未调用 Solver。",
+                "output": "信息不足，未调用 Solver。" if message is None else "按本轮请求返回记录，未调用 Solver。",
             },
         ],
-        "mcp_status": "需求澄清阶段未调用 MCP。",
+        "mcp_status": "需求澄清阶段未调用 MCP。" if message is None else "本轮未调用求解器。",
         "warehouse_summary": [],
         "allocations": [],
         "conversation_id": conversation_id,

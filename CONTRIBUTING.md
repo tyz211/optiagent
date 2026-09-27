@@ -16,19 +16,23 @@ This repository is a practical prototype for people exploring operations researc
 ## Local Development
 
 ```bash
-python3 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-demo.lock
 uvicorn api.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 ## Suggested Validation
 
 ```bash
-python3 -m unittest discover -s tests
-python3 -m compileall api optiagent
-node --check web/app.js
+# 基础模式不要求神经网络依赖或检查点。
+python scripts/verify_demo.py --profile core
+
+# 完整交付验收需 requirements-rl.lock 及两份固定权重。
+python scripts/verify_demo.py --profile full
 ```
+
+Choose the profile matching the installed dependencies. See [reproducible delivery](docs/reproducible-release.md) for the frozen environment, archive builder, model provenance and output reports. Generated code should include Chinese comments.
 
 ## Contribution Style
 

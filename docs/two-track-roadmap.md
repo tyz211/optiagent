@@ -87,10 +87,13 @@ $$
 - BC + Masked Double DQN；
 - 真实 Solver 参考结果和真实 MCP stdio 故障训练；
 - 独立 train/validation/test 与不可覆盖训练记录。
+- 29/35 维 checkpoint 已接入主 LangGraph，实际动作与观测可导出；训练支持验证集选模、独立 BC/末轮 DQN 对照和权重保存。
+- 真实恢复训练集已按实例内容指纹隔离；工作流支持来源/结果标记、只读 JSONL 导出和数据质量隔离清单。
+- 已提供固定轨迹的 BC + Masked CQL 离线训练入口、版本化奖励转换与独立日志诊断；生产用户轨迹覆盖仍待扩大。
 
 ### 3.4 下一步
 
-- 将参数化 policy 接入主 LangGraph，而不只在独立环境评测；
+- 补齐主流程 transport 观测并接入 40 维策略，扩展上传数据的规模特征与动态预算；
 - 扩展 `ask_clarification`、`select_tool`、`select_solver` 和 `revise_model` 等层次化动作；
 - 采集远程 Streamable HTTP MCP、LLM 建模错误和真实用户修正轨迹；
 - 建立 rule、LLM ReAct、BC、DQN 和 offline RL 的统一推理接口。

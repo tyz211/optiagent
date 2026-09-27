@@ -57,11 +57,13 @@ def main() -> None:
                 "run_id": recorder.paths.run_id,
                 "algorithm": training.report["algorithm"],
                 "evaluation": training.report["evaluation"],
+                "selection": training.report["training"]["selection"],
             },
         )
         report_path = recorder.paths.report
         report_path.write_text(json.dumps(training.report, ensure_ascii=False, indent=2), encoding="utf-8")
-        record = recorder.complete(training.report)
+        comparisons = training.save_comparisons(recorder.paths.run_directory, run_id=recorder.paths.run_id)
+        record = recorder.complete(training.report, extra_artifacts=comparisons)
     except BaseException as exc:
         recorder.fail(exc)
         raise

@@ -1,0 +1,82 @@
+{
+  "schema_version": "1.0",
+  "release_id": "demo-2026.09.27",
+  "tested_environment": {
+    "python": "3.14.0",
+    "system": "Darwin",
+    "machine": "arm64"
+  },
+  "source_globs": [
+    "api/**/*.py",
+    "optiagent/**/*.py",
+    "optiagent/*.md",
+    "scripts/*.py",
+    "tests/*.py",
+    "web/*.js",
+    "web/*.css",
+    "web/*.html",
+    "examples/*.json",
+    "examples/*.md"
+  ],
+  "files": [
+    ".gitignore",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "README.md",
+    "README_EN.md",
+    "assets/architecture.png",
+    "assets/ui-demo.png",
+    "data/01_knapsack_data.csv",
+    "data/china_city_reference.csv",
+    "data/facility_location_costs.csv",
+    "data/facility_location_customers.csv",
+    "data/facility_location_warehouses.csv",
+    "data/tsp.csv",
+    "docs/agent-workflow.md",
+    "docs/demo-release.md",
+    "docs/e2e-test-plan.md",
+    "docs/learning-policy.md",
+    "docs/live-repair-demo.md",
+    "docs/mcp-architecture.md",
+    "docs/multi-turn-agent-roadmap.md",
+    "docs/offline-study-results.md",
+    "docs/offline-study.md",
+    "docs/project-status-2026-09-19.md",
+    "docs/repair-demo-training.md",
+    "docs/reproducible-release.md",
+    "docs/research-direction.md",
+    "docs/rl-environment.md",
+    "docs/rl-training-results.md",
+    "docs/trajectory-data.md",
+    "docs/two-track-roadmap.md",
+    "release/demo.json",
+    "requirements-demo.lock",
+    "requirements-rl.lock",
+    "requirements-rl.txt",
+    "requirements.txt",
+    "start.sh"
+  ],
+  "checkpoints": {
+    "previous": {
+      "path": "artifacts/rl/studies/20260919-five-seed-v2/runs/seed-11/recovery_policy.pt",
+      "sha256": "1148f8a6c47fd184aa600c7a66350769b080f6396634c6ab0d691c8002f43011",
+      "bytes": 122475,
+      "study": "20260919-five-seed-v2",
+      "seed": 11,
+      "algorithm": "BC + Masked CQL",
+      "state_encoder_version": "2.0",
+      "source": "生成实例和受控故障，非真实业务数据"
+    },
+    "learned": {
+      "path": "artifacts/rl/studies/20260921-repair-demo/runs/seed-11/recovery_policy.pt",
+      "sha256": "9f2c0fbc9255a3595c82a70bfe0bf94c4b1743781f80eb03bed05820a9973bcd",
+      "bytes": 122475,
+      "study": "20260921-repair-demo",
+      "seed": 11,
+      "algorithm": "BC + Masked CQL",
+      "state_encoder_version": "2.0",
+      "source": "生成实例和受控故障，非真实业务数据"
+    }
+  }
+}

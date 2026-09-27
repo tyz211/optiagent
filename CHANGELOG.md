@@ -4,7 +4,42 @@ All notable changes to this project will be documented in this file.
 
 ## 2026-09
 
+### Local delivery: demo-2026.09.27
+
+- Added pinned core/RL dependency closures for the Python 3.14 macOS arm64 baseline and a unified acceptance runner with isolated databases, dialogue checks and HTTP/SSE repair checks.
+- Added deterministic source archives that include in-scope uncommitted modules, per-file hashes and optional fixed research checkpoints, while excluding user data and local credentials.
+- Documented model provenance, archive verification and fresh-environment setup; synchronized Chinese/English delivery guidance and made development reload opt-in.
+
 ### Added
+
+- Added versioned inline dialogue inputs, atomic full-data replacement, knapsack capacity edits, save-without-solve, consecutive undo, and verified same-conversation plan comparisons.
+- Added a ready-to-use dialogue example, data-version cards, result export, single-process overlapping-turn protection, recent-history fixes, and an isolated seven-turn acceptance runner.
+
+- Added a live repair demo in the existing Web app: bounded scenario inputs, explicit rule/previous/learned policy selection, streamed workflow and verification evidence, same-case comparisons, and JSON export.
+- Isolated live demo execution in per-request subprocesses and temporary databases, with concurrency limits, cancellation/timeout cleanup, missing-checkpoint errors, and regression tests.
+
+- Added a separate data-repair benchmark profile that solves corrupted coefficient mappings and verifies solutions against immutable source data, with auditable rebind and solve events.
+- Added previous-policy evaluation, prior-study instance exclusion, a separately declared recovery-reliability gate, and an offline interactive repair replay generated from hash-checked experiment records.
+
+- Added a frozen, content-isolated multi-seed offline study with per-template coverage quotas, prior behavior-instance exclusion, source/data/checkpoint hashes, and isolated parallel workflow execution.
+- Added instance-paired comparisons and per-seed safety, recovery-success, and call-cost gates across rule, BC, final CQL, and validation-selected policies.
+- Normalized facility-location defaults before study fingerprinting to match the persisted workflow data, with regression coverage.
+- Fixed job-shop numerical machine overlaps found by the expanded benchmark using conditional constraints and stricter solver tolerances, preserving independent verification thresholds.
+
+- Integrated upstream tabular Q-learning and continuation tests under a separate `train_tabular_recovery_policy.py` entry point, preserving the local DQN/CQL workflows.
+- Added a dated GitHub/local reconciliation report and evidence-based next-stage evaluation gates.
+
+- Added strict offline dataset loading with file hashes, episode contract revalidation, content-group split checks, and manifest reconciliation.
+- Added versioned sparse/verified-cost reward modes, fixed-dataset BC plus action-masked discrete CQL, validation diagnostics, and independently saved BC/CQL checkpoints.
+- Added offline tests for conservative gradients, terminal bootstrap handling, corrupted datasets, and test-set isolation from training and checkpoint selection.
+
+- Added deterministic variable-size recovery instances, versioned content fingerprints, shared fault variants, and cross-split overlap checks before real/transport policy training.
+- Added provenance and outcome labels for workflow episodes, read-only scoped SQLite export, sanitized offline JSONL datasets, stable instance-group splits, artifact hashes, and quarantine reasons.
+- Added tests for content leakage, state-encoding preservation, failed recovery transitions, user isolation, and source-database immutability.
+
+- Added configurable v1/v2 learned recovery checkpoints to the main LangGraph, with constrained inference, recorded rule fallbacks, and single-execution action persistence.
+- Added exact policy observations to trajectory exports, validation-only checkpoint selection, frozen BC and final DQN baselines, and independently saved comparison checkpoints.
+- Added a real workflow integration benchmark across six templates and five controlled feedback scenarios, using isolated databases and persisted decision trajectories.
 
 - Added a persistent multi-turn `RequirementBrief`, a Requirement Analyst graph node, clarification routing, and a solver-readiness guard.
 - Added a conversation-scoped requirements API and frontend requirement cards for confirmed constraints, missing information, and follow-up questions.

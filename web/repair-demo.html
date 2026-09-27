@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>OptiAgent · 实时修复演示</title>
+  <link rel="stylesheet" href="/static/repair-demo.css?v=20260922-2">
+  <script defer src="/static/repair-demo.js?v=20260922-2"></script>
+</head>
+<body>
+<main>
+  <header><a class="brand" href="/">OptiAgent</a><span>实时修复实验室</span><a href="/">返回对话</a></header>
+  <div class="intro"><p class="eyebrow">演示模式 · 生成数据 · 真实执行</p><h1>看到错误，验证修复。</h1><p>选择一类优化问题，现场运行求解与修复。每次点击都会执行新的工作流；原始数据、错误映射和验算证据一起展示。</p></div>
+  <div class="workspace">
+    <aside>
+      <form id="runForm">
+        <h2>配置本次实验</h2>
+        <label>优化问题<select id="template" disabled></select></label>
+        <label>错误场景<select id="scenario" disabled></select></label>
+        <p id="scenarioDescription" class="hint"></p>
+        <label>决策策略<select id="policy" disabled></select></label>
+        <div class="numbers"><label>数据种子<input id="seed" type="number" min="0" max="1000000" step="1" value="7300" required></label><label>实例编号<input id="instance" type="number" min="0" max="99" step="1" value="0" required></label></div>
+        <p class="hint">相同问题、种子和编号会生成同一份数据，便于更换策略比较。</p>
+        <button id="run" class="primary" type="submit" disabled>开始实时运行</button>
+        <button id="cancel" type="button" hidden>停止本次运行</button>
+        <button id="reload" type="button" hidden>重新加载配置</button>
+        <p id="availability" class="hint"></p>
+      </form>
+      <p class="boundary">独立进程运行，不读取你的上传数据，不写入普通对话历史，不调用 LLM。重建使用确定性的映射修复器。</p>
+    </aside>
+    <article>
+      <section class="execution">
+        <div class="section-title"><h2>本次执行</h2><span id="state" class="badge" role="status">加载配置</span></div>
+        <p id="runContext" class="hint">尚未运行</p>
+        <p id="message" aria-live="polite">正在检查演示环境与策略…</p>
+        <ol id="nodes" class="nodes" aria-label="实时节点进度"></ol>
+        <div id="result" hidden></div>
+        <button id="download" type="button" hidden>下载本次结果</button>
+      </section>
+      <section><h2>映射与验算证据</h2><p class="hint">先用当前映射求解，再对照未被修改的原始数据独立验算。</p><div id="evidence" class="evidence"><p class="empty">开始运行后，这里会实时出现输入绑定、实际求解和验算结果。</p></div></section>
+      <section><h2>同一案例的策略比较</h2><p class="hint">更换策略再次运行，即可在此比较。这里只显示你在本页实际执行的结果。</p><div class="table-scroll"><table><thead><tr><th>策略</th><th>结果</th><th>建模 / 求解尝试</th><th>恢复动作</th></tr></thead><tbody id="comparison"><tr><td colspan="4">尚未运行。</td></tr></tbody></table></div></section>
+      <section><details><summary>查看本次原始数据与错误映射</summary><p class="hint">错误映射是用于故障演示的候选输入。正常和传输失败场景不一定使用它；以执行证据为准。</p><div class="data-grid"><div><h3>原始数据</h3><pre id="sourceData">运行后显示</pre></div><div><h3>错误映射</h3><pre id="corruptedData">运行后显示</pre></div></div></details></section>
+    </article>
+  </div>
+  <footer>生成实例与受控错误用于演示恢复行为，不代表真实业务效果。普通自然语言求解请使用主对话页面。</footer>
+</main>
+</body></html>

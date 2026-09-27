@@ -223,3 +223,160 @@ python scripts/train_mcp_transport_policy.py \
 ## 下一个研究问题
 
 下一步不是继续堆叠相同 episode，而是采集远程 Streamable HTTP MCP、LLM 建模错误和主 LangGraph 的真实轨迹，让不同动作在成功率、解质量、延迟与调用成本之间产生更复杂的 trade-off，再在未见实例上比较 Rule、LLM ReAct、BC、DQN 与 Offline RL。开源模型的 SFT/GRPO 属于独立的模型 policy 训练层，二者关系见 [双主线总体路线](two-track-roadmap.md)。
+
+## 2026-09-17：主流程接入与验证集选模
+
+`optiagent/recovery_runtime.py` 为主 LangGraph 提供统一恢复推理入口。默认继续使用规则策略；配置 `OPTIAGENT_RECOVERY_CHECKPOINT` 后加载本地 v1/v2（29/35 维）checkpoint，并固定使用贪心推理。网络必须遵守由确定性 Verifier 和尝试预算生成的 action mask；推理异常或非法输出会回退规则，并在决策 metadata 中记录原因。不存在或版本不兼容的文件在加载阶段明确报错。
+
+40 维 transport checkpoint 仍用于独立环境。主工作流尚未提供完整连接超时、断连、协议合同和失败计数观测，因此暂时拒绝将这些 checkpoint 用于主流程。
+
+每次网络决策仅执行一次。节点完成时，将实际动作与节点结果一起持久化，不再为记录轨迹额外调用规则策略。训练视图增加 `policy_observation`、`next_policy_observation` 与逐步 policy 版本；输入只包含当前可见的验证反馈、尝试预算、动作历史和成本估计。终止后的下一 observation 为 `null`，离线训练消费者必须结合 `done` 处理。
+
+主流程成本使用与真实恢复环境一致的归一化公式，并以首次 Solver 节点耗时估算后续动作成本；它不是货币费用，且节点耗时包含应用组织响应的开销，与训练集中纯 Gateway 耗时存在差异。当前只从内联 JSON 精确计数实例规模，其他数据源记为未知；扩大上线范围前需补齐上传数据特征。
+
+### 训练与模型选择
+
+训练只在 train split 上收集教师样本和经验回放，每 100 episodes 在独立 validation 环境做贪心评估。以平均回报选模，同分保留较早 checkpoint；test split 不参与选择。保存三个版本：
+
+- `recovery_policy.pt`：验证集选出的版本；
+- `bc_policy.pt`：BC 预热结束时冻结的版本；
+- `dqn_final_policy.pt`：最后一轮 DQN 版本。
+
+报告单独列出三者指标，`training.selection` 包含评估历史、选中轮次与阶段。训练总更新次数和所选 checkpoint 的更新次数分别记录，不能混淆。旧 checkpoint 可继续加载；这些文件用于推理与复核，不是包含完整回放池的精确续训快照。
+
+```bash
+# 执行训练，保留全部模型对照和验证历史。
+.venv/bin/python scripts/train_real_recovery_policy.py \
+  --seed 53 --episodes 1200 --bc-epochs 160 \
+  --threads 1 --validation-interval 100
+
+# 替换为训练输出路径，评测真实主流程；输出文件不能重名。
+.venv/bin/python scripts/evaluate_workflow_policy.py \
+  --checkpoint artifacts/rl/runs/<run_id>/recovery_policy.pt \
+  --seed 54 --output artifacts/rl/workflow_evaluations/<evaluation_id>.json
+
+# 启用主流程学习策略；未配置此项时使用规则。
+export OPTIAGENT_RECOVERY_CHECKPOINT="/absolute/path/to/recovery_policy.pt"
+./start.sh
+```
+
+评测脚本每个案例使用临时数据库，真实执行 Requirement、Planner、Modeler、Solver 和 Verifier 等节点，并对求解后的验证反馈注入受控故障。仓库选址通过规范化三表数据走实际应用入口。生成的报告保留每个案例的训练视图、实际动作和模型摘要，不读取开发环境中的对话或 LLM 配置。
+
+### 本轮结果
+
+正式记录：`20260917T143825+0800_seed53_c4238979`。90 个任务，train/validation/test 各 30；BC 160 epochs、54 条教师决策；DQN 1,200 episodes、2,028 次交互、1,965 次更新。
+
+| 测试策略 | 可恢复成功率 | 平均回报 | 平均动作成本 | 非法动作率 |
+| --- | ---: | ---: | ---: | ---: |
+| 验证集所选模型（BC） | 1.0 | 0.665474 | 0.094525 | 0.0 |
+| BC | 1.0 | 0.665474 | 0.094525 | 0.0 |
+| 末轮 DQN | 1.0 | 0.665474 | 0.094525 | 0.0 |
+| Rule | 1.0 | 0.641475 | 0.118526 | 0.0 |
+| Random Valid | 0.541667 | 0.097320 | 0.049347 | 0.0 |
+
+验证集最终选择 BC（episode 0），因为 DQN 没有取得更高回报。BC 与末轮 DQN 均复现成本感知教师，不能将其相对 Rule 的优势解释为本轮 RL 更新带来的收益。随机策略成本更低伴随着更低的任务成功率。
+
+对应主流程报告：`artifacts/rl/workflow_evaluations/20260917_seed54_final.json`。规则与学习策略各完成 30 个案例，均达到可恢复成功率 1.0、全部任务成功率 0.8，持续失败案例正确终止；无非法动作或推理回退。平均 Solver 调用均为 1.8 次，平均 Modeler 调用从 Rule 的 1.4 次降为学习策略的 1.2 次。
+
+这些数据验证恢复策略与应用集成。当前烟雾实例使用少量数值变体，部分模板在不同 split 中仍可能出现相同的 OR 实例内容；不同 task ID 或 seed 不等于实例内容隔离。本轮不能作为严格未见实例泛化证据。下一步优先补充按规范化实例内容去重的训练集划分、真实用户修正和失败轨迹，再扩展 offline RL，避免仅增加重复 episode。
+
+## 2026-09-17：实例内容隔离与轨迹数据集
+
+真实恢复环境升级为 `gateway-recovery-v2.0`。六类模板不再复用少量烟雾数值变体，而是通过稳定的 `(seed, split, template, index)` 坐标生成不同规模、成本、容量与工序的实例。同一个实例仅做一次参考求解，然后派生五种恢复场景，共享参考结果与耗时，并留在同一个 split。
+
+每个任务保存 `instance_data` 和 `instance_fingerprint`。训练前重新计算内容指纹，拒绝旧版缺少实例内容的数据、指纹与内容不一致的数据和跨 split 重复实例。MCP transport 训练也继承这一检查。指纹规范化字典顺序、表行顺序与等值数字表示，但不声称完成数学同构或所有语义重复检查。
+
+```bash
+# 每个模板、每个集合使用四个实例：6 × 3 × 4 = 72 个实例，派生 360 个故障任务。
+.venv/bin/python scripts/train_real_recovery_policy.py \
+  --seed 55 --episodes 1200 --bc-epochs 160 \
+  --instances-per-split 4 --threads 1
+
+# 扩展主流程采集：24 个实例 × 5 种场景 × 2 个策略 = 240 个 episode。
+.venv/bin/python scripts/evaluate_workflow_policy.py \
+  --checkpoint artifacts/rl/runs/<run_id>/recovery_policy.pt \
+  --seed 56 --instances-per-template 4 \
+  --output artifacts/rl/workflow_evaluations/expanded.json
+
+# 按实际实例内容分组导出，保持实际执行动作与失败终止样本。
+.venv/bin/python scripts/export_workflow_dataset.py \
+  --evaluation-report artifacts/rl/workflow_evaluations/expanded.json \
+  --output-dir artifacts/rl/datasets/controlled_expanded --seed 56
+```
+
+本轮训练记录：`20260917T173217+0800_seed55_ea4ab06f`。
+
+- 训练/验证/测试各 24 个不同内容实例、120 个故障任务，跨集合指纹重叠为 0；
+- BC 使用 216 条教师决策；DQN 完成 1,200 episodes、2,014 次交互和 1,951 次更新；
+- 所选模型测试可恢复成功率 1.0、全部任务成功率 0.8、平均回报 0.655060、非法动作率 0；
+- Rule 平均回报 0.631060，随机合法策略平均回报 0.225734；
+- 验证选模仍保留 BC，末轮 DQN 与 BC 在测试上持平。移除显式内容重复后，当前控制场景仍未显示 DQN 超越教师的收益。
+
+扩展主流程报告：`artifacts/rl/workflow_evaluations/20260917_seed56_expanded.json`。规则与学习策略各 120 个案例，可恢复成功率均为 1.0；平均建模次数分别为 1.4 与 1.2，均无非法动作或推理回退。
+
+导出清单：`artifacts/rl/datasets/20260917_controlled_expanded/manifest.json`。共 240 个 episode、432 条决策，其中直接成功 48、恢复成功 144、失败终止 48；无被隔离记录。24 个实例经稳定哈希分为 train/validation/test 的 21/2/1 个实例，三个集合非空且内容隔离。由于验证和测试实例仍少，这批数据用于验证离线数据管道，不能单独作为稳定的离线策略评估基准。
+
+真实工作流已增加来源、结果分类和内容指纹，数据库导出支持只读用户范围。当前实际检查的匿名范围内没有历史 episode；受控评测样本始终标记为受控来源，不能冒充生产失败轨迹。测试另验证了“策略选择重试后工具抛异常”的轨迹能保留实际动作及终局负奖励。
+
+下一步：扩大真实用户失败与修正轨迹覆盖，补齐上传数据的内容标识，建立生产稀疏终局奖励与成本奖励的明确转换，再实现与 BC 对照的离线训练入口。当前新增的是可信数据合同与导出流程，并未完成生产轨迹 offline RL 训练。
+
+## 2026-09-17：固定轨迹上的 BC + Masked CQL
+
+新增 `scripts/train_offline_policy.py`，从已导出的 JSONL 直接训练，不在训练期间调用 Gateway、Solver、LLM 或主流程环境。消费端重新核验文件摘要、episode 合同、实际实例分组及 manifest 汇总；任一划分为空、文件被修改、动作非法或状态链不完整都会拒绝训练。
+
+算法采用 BC 预热，再加入离散 Conservative Q-Learning 的保守项。CQL 在 Bellman 误差之外加入 Q 值正则，以缓解离线数据分布与所学策略之间的差异，参考 [Kumar 等人的 CQL 论文](https://arxiv.org/abs/2006.04779)。本项目采用固定系数、合法动作 mask、Double DQN 目标和 Huber TD 损失：
+
+$$
+L = L_{TD} + \alpha\,\mathbb{E}_{(s,a)\sim D}
+\left[\log\sum_{a'\in A_{legal}(s)}\exp Q(s,a') - Q(s,a)\right].
+$$
+
+非法动作不参与保守项或下一状态 argmax；终止样本不读取下一状态网络。单个状态只有一个合法动作时，保守项为零。这里是针对当前四动作环境的工程实现，不宣称继承论文在其他条件下的全部理论保证。
+
+### 奖励与评估边界
+
+默认 `--reward-mode verified_cost` 使用新版本 `workflow-verified-cost-v1`：验证成功终局 +1、失败终局 -1，恢复动作另外扣除记录在状态中的成本估计。非终局基础奖励为 0。可用 `--reward-mode sparse` 保留原始稀疏奖励；源数据不会被覆盖。
+
+两种模式都保留失败轨迹。BC 默认拟合全部训练集已记录动作，因此是行为策略对照，并不假定每条记录都是最优示范。数据集 manifest 摘要和训练奖励版本写入报告及 checkpoint，便于复核。
+
+验证集选模使用 `logged_return_mse`，即 Q 网络对日志实际动作的估值与该条轨迹折扣回报之间的误差。测试集仅在训练和选模完成后用于报告。这个指标是诊断性代理，不是新策略价值估计；BC 分类分数原本也没有 Q 值校准，因此误差下降不能证明策略改进。报告另提供全部状态和多合法动作状态的行为一致率，避免大量强制动作掩盖差异。
+
+```bash
+# 固定数据集训练：默认只做离线采样，不产生新环境交互。
+.venv/bin/python scripts/train_offline_policy.py \
+  --dataset artifacts/rl/datasets/20260917_controlled_expanded \
+  --seed 57 --steps 1500 --bc-epochs 160 --cql-alpha 0.1 \
+  --reward-mode verified_cost
+
+# 在新的主流程实例上分别测试验证选中模型和 BC 模型。
+.venv/bin/python scripts/evaluate_workflow_policy.py \
+  --checkpoint artifacts/rl/offline_runs/<run_id>/recovery_policy.pt \
+  --seed 58 --instances-per-template 4 \
+  --output artifacts/rl/workflow_evaluations/offline_cql.json
+.venv/bin/python scripts/evaluate_workflow_policy.py \
+  --checkpoint artifacts/rl/offline_runs/<run_id>/bc_policy.pt \
+  --seed 58 --instances-per-template 4 \
+  --output artifacts/rl/workflow_evaluations/offline_bc.json
+```
+
+训练产物位于 `artifacts/rl/offline_runs/<run_id>/`，包含 `recovery_policy.pt`、`bc_policy.pt`、`cql_final_policy.pt`、训练报告、输入数据 manifest 副本与运行 manifest。模型兼容现有 35 维推理接口，自动标记仍需主流程评测；训练不会自动修改 Web 服务使用的 checkpoint。这些文件不包含完整续训数据加载器状态，不作为精确续训快照。
+
+### 第一轮离线结果
+
+运行：`20260917T190810+0800_seed57_57ae19bb`。固定数据来自受控工作流，共 240 个 episode、432 条 transition，划分为 train/validation/test 的 210/20/10 个 episode，分别对应 21/2/1 个实例。BC 160 epochs，CQL 更新 1,500 次，训练期间环境交互次数为 0；验证集选中第 200 次更新的 CQL checkpoint。
+
+测试日志上，选中模型的全部动作一致率约 94.44%，多合法动作状态一致率 87.5%，日志回报 MSE 为 0.212900，非法动作率为 0。以上不是成功率或部署收益。
+
+随后在 seed 58 的 24 个新实例、120 个故障案例上分别运行 BC 和 CQL。已核验这 24 个实例与离线数据三个集合的内容指纹重叠为 0，且两个模型评测使用相同实例：
+
+| 主流程指标 | BC | 离线 CQL |
+| --- | ---: | ---: |
+| 全部任务成功率 | 0.8 | 0.8 |
+| 可恢复任务成功率 | 1.0 | 1.0 |
+| 平均 Solver 调用 | 1.8 | 1.8 |
+| 平均 Modeler 调用 | 1.4 | 1.233333 |
+| 非法动作 / 异常回退 | 0 / 0 | 0 / 0 |
+
+比较报告：`artifacts/rl/workflow_evaluations/20260917_offline_comparison.json`，包含两个原始报告的文件摘要。CQL 在这轮受控测试中保持恢复率，并比本轮 BC 减少约 11.9% 的建模调用；这是单种子、小规模结果，未证明生产收益或统计显著性。离线验证和测试实例尤其少，下一阶段需扩大覆盖并做多随机种子复现。
+
+已验证文件篡改检测、伪造 action/跨集合记录拒绝、奖励转换、非法动作的保守项梯度、终局不自举、Double DQN 目标选择，以及修改测试奖励不会改变训练权重或选模。真实用户数据的离线训练仍需等待足够的真实失败与修正样本，本轮不把受控轨迹标记为生产数据。

@@ -42,6 +42,7 @@ from api.database import (
     set_active_dataset,
 )
 from api.services.agent_workflow import agent_graph_manifest, run_agent_workflow
+from api.services.repair_demo import router as repair_demo_router
 from optiagent.data import SupplyChainData, normalize_data, validate_data
 from optiagent.llm import DataProfile
 from optiagent.mcp_client import builtin_mcp_config
@@ -50,6 +51,7 @@ from optiagent.schema_mapping import assemble_facility_data, apply_table_mapping
 
 
 app = FastAPI(title="OptiAgent API")
+app.include_router(repair_demo_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

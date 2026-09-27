@@ -695,6 +695,9 @@ def _solve_job_shop_with_gurobi(tasks: pd.DataFrame, time_limit: int | None = No
     try:
         model = gp.Model("job_shop_milp")
         configure_gurobi_model(model, _config_with_time_limit(time_limit))
+        # 求解容差比独立验证器更严格，避免临界可行解输出微小的机器重叠。
+        model.Params.FeasibilityTol = 1e-9
+        model.Params.IntFeasTol = 1e-9
         task_ids = tasks.index.tolist()
         start = model.addVars(task_ids, lb=0, ub=horizon, vtype=GRB.CONTINUOUS, name="start")
         end = model.addVars(task_ids, lb=0, ub=horizon, vtype=GRB.CONTINUOUS, name="end")
@@ -717,8 +720,9 @@ def _solve_job_shop_with_gurobi(tasks: pd.DataFrame, time_limit: int | None = No
             for pos, first in enumerate(ids):
                 for second in ids[pos + 1:]:
                     before = model.addVar(vtype=GRB.BINARY, name=f"before_{first}_{second}")
-                    model.addConstr(start[second] >= end[first] - horizon * (1 - before), name=f"no_overlap_a_{first}_{second}")
-                    model.addConstr(start[first] >= end[second] - horizon * before, name=f"no_overlap_b_{first}_{second}")
+                    # 直接表达条件约束，避免手写大 M 放大二元变量容差而产生微小工序重叠。
+                    model.addGenConstrIndicator(before, True, start[second] >= end[first], name=f"no_overlap_a_{first}_{second}")
+                    model.addGenConstrIndicator(before, False, start[first] >= end[second], name=f"no_overlap_b_{first}_{second}")
 
         model.setObjective(makespan, GRB.MINIMIZE)
         model.optimize()

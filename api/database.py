@@ -672,6 +672,7 @@ def finish_agent_step(
     reward: dict | None = None,
     error: str | None = None,
     attempt: int = 1,
+    action: dict | None = None,
 ) -> None:
     """补充工具观察、节点奖励、耗时和成功或失败状态。"""
 
@@ -680,7 +681,7 @@ def finish_agent_step(
             """
             UPDATE agent_steps
             SET status = ?, observation_json = ?, reward_json = ?, error = ?,
-                elapsed_ms = ?, completed_at = CURRENT_TIMESTAMP
+                elapsed_ms = ?, action_json = COALESCE(?, action_json), completed_at = CURRENT_TIMESTAMP
             WHERE episode_id = ? AND node_id = ? AND attempt = ?
             """,
             (
@@ -689,6 +690,7 @@ def finish_agent_step(
                 _json_dump(reward or {}),
                 error,
                 elapsed_ms,
+                _json_dump(action) if action is not None else None,
                 episode_id,
                 node_id,
                 attempt,
@@ -806,6 +808,13 @@ def get_training_episode(episode_id: str, *, user_id: int | None) -> dict | None
     episode = get_agent_episode(episode_id, user_id=user_id)
     if episode is None:
         return None
+    return build_training_episode(episode)
+
+
+def build_training_episode(episode: dict) -> dict:
+    """将已读取的 episode 转为训练视图，供在线 API 与只读批量导出共用。"""
+
+    episode_id = episode["episode_id"]
     steps = episode["steps"]
     terminal_episode = episode["status"] in {"completed", "failed"}
     transitions = []
@@ -826,7 +835,7 @@ def get_training_episode(episode_id: str, *, user_id: int | None) -> dict | None
                 "status": step["status"],
             }
         )
-    decision_steps = [step for step in steps if (step.get("action") or {}).get("candidate_ids")]
+    decision_steps = [step for step in steps if step["status"] == "completed" and (step.get("action") or {}).get("candidate_ids")]
     decision_transitions = []
     for index, step in enumerate(decision_steps):
         action = step["action"]
@@ -838,22 +847,36 @@ def get_training_episode(episode_id: str, *, user_id: int | None) -> dict | None
                 "node_id": step["node_id"],
                 "attempt": step["attempt"],
                 "state": step["state"],
+                "policy_observation": step["state"].get("recovery_observation"),
                 "candidate_actions": action.get("candidate_ids", []),
                 "action_mask": action.get("action_mask", []),
                 "action": action.get("selected_action"),
                 "observation": step["observation"],
                 "next_state": next_step["state"] if next_step else {"terminal": terminal_episode},
+                "next_policy_observation": next_step["state"].get("recovery_observation") if next_step else None,
+                "policy": {"name": action.get("policy_name"), "version": action.get("policy_version")},
                 "reward": float(episode.get("total_reward") or 0.0) if is_terminal_decision else 0.0,
                 "done": is_terminal_decision,
                 "status": step["status"],
             }
         )
     template_id = episode["template_id"] or _template_from_steps(steps)
+    observations = [item.get("policy_observation") or {} for item in decision_transitions]
+    failed_checks = [item for item in observations if not (item.get("verification") or {}).get("passed")]
+    final_action = decision_transitions[-1]["action"] if decision_transitions else None
+    outcome = ("execution_failed" if episode["status"] == "failed" else
+               "terminated_failure" if final_action == "terminate" else
+               "recovered_success" if final_action == "accept_solution" and failed_checks else
+               "verified_success" if final_action == "accept_solution" else "no_recovery_decisions")
     return {
         "schema_version": "1.0",
         "episode_id": episode_id,
         "policy": {"name": episode["policy_name"], "version": episode["policy_version"]},
-        "task": {"question": episode["question"], "template_id": template_id},
+        "task": {"question": episode["question"], "template_id": template_id,
+                 "instance_fingerprint": observations[0].get("instance_fingerprint") if observations else None},
+        "trajectory_source": steps[0]["state"].get("trajectory_source", "unknown_legacy") if steps else "unknown_legacy",
+        "outcome": outcome,
+        "failed_verification_count": len(failed_checks),
         "status": episode["status"],
         "total_reward": episode["total_reward"],
         "transitions": transitions,
@@ -891,7 +914,7 @@ def list_runs(limit: int = 20, user_id: int | None = None, conversation_id: int 
     with connect() as conn:
         clause, params = _scope_clause(user_id, conversation_id)
         rows = conn.execute(
-            f"SELECT * FROM runs WHERE {clause} ORDER BY id ASC LIMIT ?",
+            f"SELECT * FROM (SELECT * FROM runs WHERE {clause} ORDER BY id DESC LIMIT ?) ORDER BY id ASC",
             [*params, limit],
         ).fetchall()
         return [dict(row) for row in rows]

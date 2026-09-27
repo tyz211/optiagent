@@ -154,5 +154,56 @@ create_agent_episode(running)
 
 - 当前候选动作、mask 和条件路由确定性 Recovery Policy 产生，尚无模型 logits 或行为概率。
 - 已支持有界建模/求解重试并记录 `attempt`，但尚未加入工具故障注入和动态预算。
-- Web 批量接口仍返回 JSON；RL benchmark 脚本已可导出 JSONL，尚未提供 Parquet 和数据集版本清单。
+- Web 批量接口返回 JSON；独立导出脚本已提供按实例分组的 JSONL、数据版本清单与文件摘要，尚未提供 Parquet。
 - 当前 reward 是确定性稀疏终局奖励，尚未加入 token、MCP 调用次数、延迟和求解器成本。
+
+### 2026-09-17 恢复策略补充
+
+主流程恢复节点已支持加载 v1/v2 学习策略。`agent_steps.action` 在推理完成后写入实际动作，执行开始时只保存 `pending` 标记，避免将预先计算的规则动作误当作网络动作。未完成的决策节点不进入 `decision_transitions`。
+
+每条 decision transition 额外提供 `policy_observation`、`next_policy_observation` 和实际 `policy` 名称/版本。对应状态也保存在 `state.recovery_observation`，包含固定顺序的候选动作和 mask；决策 metadata 记录 checkpoint SHA-256、训练阶段及异常回退原因。历史记录缺少这些字段时返回 `null`，不能默认将缺失状态当作零向量进行离线训练。
+
+主流程奖励仍为原有确定性终局奖励；状态中的成本估计用于在线推理，不意味着当前轨迹奖励已经与成本感知训练环境完全对齐。开展生产轨迹 offline RL 前需要显式版本化奖励合同并处理动作成本与终止状态。
+
+### 实例分组与离线导出（2026-09-17 第二阶段）
+
+新轨迹记录 `trajectory_source`，真实应用默认为 `live_workflow`，受控评测必须显式使用 `controlled_workflow_benchmark`；旧记录没有来源时标记为 `unknown_legacy`，不自动升级为真实样本。训练视图同时提供 `outcome` 和失败验证次数，区分直接成功、恢复成功、失败终止和执行异常。episode 状态为 `completed` 只表示图执行结束，不代表求解成功。
+
+实例指纹版本为 `instance-content-v1`。指纹来自模板与实际数据内容，统一字典键顺序、表行顺序和 `1`/`1.0` 等值表示；矩阵与标量序列保留顺序。主流程支持内联 JSON 和已登记的仓库三表数据。尚未取得可靠实例内容的上传文件轨迹不能凭文件名、数据库 ID 或问题文本猜测分组。
+
+`scripts/export_workflow_dataset.py` 在 SQLite 只读快照中导出指定用户范围内的全部 episode，不迁移数据库，也不受 Web 列表的 500 条上限限制。默认只读取匿名用户；登录用户需显式指定 `--user-id`。受控评测通过 `--evaluation-report` 输入，输出独立来源的数据集。
+
+```bash
+# 输出目录必须不存在，避免覆盖历史数据集。
+.venv/bin/python scripts/export_workflow_dataset.py \
+  --db data/optiagent.sqlite3 --user-id 1 \
+  --output-dir artifacts/rl/datasets/live_v1 --seed 56
+
+# 从完整的受控评测报告导出，不将这些轨迹标记为生产样本。
+.venv/bin/python scripts/export_workflow_dataset.py \
+  --evaluation-report artifacts/rl/workflow_evaluations/example.json \
+  --output-dir artifacts/rl/datasets/controlled_v1 --seed 56
+```
+
+输出包括 `train.jsonl`、`validation.jsonl`、`test.jsonl`、`quarantine.jsonl` 和 `manifest.json`。数据合同为 `workflow-recovery-offline-v1`，对应 35 维状态编码与 `workflow-sparse-terminal-v1` 奖励。每条 JSONL 是一个完整 episode，含实际动作、状态、下一状态、done、行为策略版本及逐步奖励；终止后的下一状态为 `null`。
+
+质量检查拒绝未结束 episode、缺失内容指纹、缺失 observation、非法 mask、非有限数值、不连续状态链和错误终局奖励。已执行 `retry_solver` 后工具抛异常的 episode 会保留该动作、`done=true` 和终局负奖励；首次工具失败前尚未产生恢复动作的记录只能进入隔离清单，不能伪造 transition。
+
+导出采用字段白名单：不包含问题原文、文件路径、原始异常文本、密钥或完整工具返回；错误与违反约束列表仅保留数量。自动测试确认导出前后的编码向量相同。隔离文件仅保存 episode 哈希引用与预定义原因码。
+
+分组由 `SHA256(seed + instance_fingerprint)` 固定映射到 70%/15%/15% 区间。增加新 episode 或改变读取顺序不会移动已有实例，同一实例的重复运行、不同策略和故障场景始终属于同一集合。比例是期望值，小数据集可能出现空集合；manifest 用 `all_splits_nonempty` 明确报告，不会为了凑比例拆散实例。
+
+当前导出合同保留应用原有稀疏终局奖励，尚未将其变换为 Gateway 训练中的动作成本奖励；未记录行为概率，也不提供离线策略价值估计。实例内容指纹不能识别所有变量重命名同构、默认字段等价和语义重复。这些边界需要在开展生产轨迹 offline RL 前继续处理。
+
+### 离线训练消费合同
+
+`offline_dataset.load_offline_dataset()` 会重新核验四个 JSONL 文件的字节数和 SHA-256、版本与来源、逐条状态合同、episode 唯一性、内容哈希分组、跨集合重叠和 manifest 计数。train/validation/test 任一为空都会拒绝训练。文件摘要用于检查与 manifest 的一致性，不是可信签名；只有来源可靠的 manifest 才能作为数据追溯依据。
+
+消费端采用两种显式奖励模式，始终不修改源数据：
+
+- `sparse`：保持 `workflow-sparse-terminal-v1` 的逐步奖励；
+- `verified_cost`：使用 `workflow-verified-cost-v1`，非终局的基础奖励为 0，验证成功终局为 +1，失败终局为 -1，再对该步 `retry_solver` 或 `rebuild_model` 扣除状态中记录的估计成本。即使恢复动作后工具抛错，也保留该动作成本和失败终局惩罚。
+
+后者避免将失败响应的格式奖励解释成任务成功。它是新的训练目标，不等同于 Gateway 环境的完整奖励：例如提前终止与预算耗尽均为 -1，不使用 Gateway 中分别定义的惩罚。训练报告和 checkpoint 同时保存源奖励版本与训练奖励版本。
+
+终止 transition 的 `next_state=null` 只在张量存储时使用占位值；TD 更新只对非终止样本读取下一状态网络和动作 mask。验证集选模依据日志动作的折扣回报拟合误差，测试集仅在最终报告中使用；此误差不是新策略价值估计。当前模型没有通过行为概率或反事实数据估计离线部署收益，仍需独立执行测试。

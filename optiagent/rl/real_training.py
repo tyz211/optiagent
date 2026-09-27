@@ -5,6 +5,7 @@ from statistics import mean
 from typing import Any
 
 from optiagent.rl.dqn import DQNConfig
+from optiagent.instance_identity import audit_instance_splits
 from optiagent.rl.environment import ACTION_IDS
 from optiagent.rl.real_environment import (
     REAL_ENVIRONMENT_VERSION,
@@ -29,6 +30,7 @@ def train_real_recovery_policy(
     """在真实 Gateway 求解轨迹上训练成本感知恢复策略。"""
 
     selected_config = config or DQNConfig()
+    audit_instance_splits(tasks)
     encoder = CostAwareRecoveryStateEncoder()
     core = train_masked_dqn_core(
         tasks,
@@ -51,6 +53,8 @@ def train_real_recovery_policy(
         "dataset": _dataset_summary(tasks),
         "training": core.metrics,
         "evaluation": {
+            "bc_policy": evaluate_policy_splits(tasks, evaluate_real_policy, core.bc_agent.policy, selected_config.seed),
+            "dqn_final_policy": evaluate_policy_splits(tasks, evaluate_real_policy, core.final_agent.policy, selected_config.seed),
             "learned_policy": evaluate_policy_splits(tasks, evaluate_real_policy, agent.policy, selected_config.seed),
             "cost_aware_teacher": evaluate_policy_splits(
                 tasks,
@@ -72,13 +76,14 @@ def train_real_recovery_policy(
             ),
         },
     }
-    return RecoveryPolicyTrainingResult(agent=agent, report=report)
+    return RecoveryPolicyTrainingResult(agent=agent, report=report, bc_agent=core.bc_agent, final_agent=core.final_agent)
 
 
 def _dataset_summary(tasks: list[RealRecoveryTask]) -> dict[str, Any]:
     """记录真实轨迹覆盖范围和耗时统计。"""
 
     return {
+        "content_split_audit": audit_instance_splits(tasks),
         "task_count": len(tasks),
         "templates": sorted({item.template_id for item in tasks}),
         "scenarios": sorted({item.scenario for item in tasks}),

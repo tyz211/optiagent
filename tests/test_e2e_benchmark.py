@@ -2,11 +2,21 @@ from __future__ import annotations
 
 import unittest
 
-from optiagent.rl.e2e_benchmark import build_smoke_instances, run_end_to_end_benchmark
+from optiagent.rl.e2e_benchmark import build_smoke_instances, run_end_to_end_benchmark, run_end_to_end_case
+from optiagent.rl.instances import generate_recovery_instance
 
 
 class EndToEndBenchmarkTests(unittest.TestCase):
     """验证六类问题的真实 Gateway/Solver/Verifier 测试矩阵。"""
+
+    def test_job_shop_binary_tolerance_does_not_allow_machine_overlap(self):
+        # 扩大数据集后发现的真实失败实例：旧大 M 约束曾允许约 0.000135 的工序重叠。
+        for index in (2, 67):
+            with self.subTest(index=index):
+                instance = generate_recovery_instance("job_shop_scheduling", seed=6100, split="train", index=index)
+                result = run_end_to_end_case(instance)
+                self.assertTrue(result.solution_verified, result.model_dump())
+                self.assertTrue(result.passed)
 
     @classmethod
     def setUpClass(cls) -> None:

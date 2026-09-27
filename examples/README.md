@@ -4,7 +4,7 @@ This folder gives visitors a fast way to understand what OptiAgent can solve and
 
 ## Facility Location
 
-Use the built-in CSV files in `/Users/tianyuanzhe/运筹优化/data`:
+Use the built-in CSV files in `../data`:
 
 - `facility_location_warehouses.csv`
 - `facility_location_customers.csv`
@@ -20,7 +20,7 @@ Sample question:
 
 Data file:
 
-- [assignment_sample.json](/Users/tianyuanzhe/运筹优化/examples/assignment_sample.json)
+- [assignment_sample.json](../examples/assignment_sample.json)
 
 Sample question:
 
@@ -32,7 +32,7 @@ Sample question:
 
 Data file:
 
-- [job_shop_scheduling_sample.json](/Users/tianyuanzhe/运筹优化/examples/job_shop_scheduling_sample.json)
+- [job_shop_scheduling_sample.json](../examples/job_shop_scheduling_sample.json)
 
 Sample question:
 
@@ -44,7 +44,7 @@ Sample question:
 
 Data file:
 
-- [production_mix_sample.json](/Users/tianyuanzhe/运筹优化/examples/production_mix_sample.json)
+- [production_mix_sample.json](../examples/production_mix_sample.json)
 
 Sample question:
 

@@ -81,11 +81,13 @@ def main() -> None:
                 "algorithm": training.report["algorithm"],
                 "environment_version": TRANSPORT_ENVIRONMENT_VERSION,
                 "evaluation": training.report["evaluation"],
+                "selection": training.report["training"]["selection"],
             },
         )
         report_path = recorder.paths.report
         report_path.write_text(json.dumps(training.report, ensure_ascii=False, indent=2), encoding="utf-8")
-        record = recorder.complete(training.report, extra_artifacts={"mcp_transport_tasks": task_path})
+        comparisons = training.save_comparisons(recorder.paths.run_directory, run_id=recorder.paths.run_id)
+        record = recorder.complete(training.report, extra_artifacts={"mcp_transport_tasks": task_path, **comparisons})
     except BaseException as exc:
         recorder.fail(exc)
         raise

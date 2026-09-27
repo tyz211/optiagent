@@ -15,13 +15,16 @@ from api.database import (
     set_agent_episode_template,
     start_agent_step,
     update_run_result,
+    touch_conversation,
 )
 from api.services.ask_service import AskExecutionContext, handle_ask, prepare_ask_context
 from api.services.requirement_service import analyze_requirement_turn, build_clarification_result
-from optiagent.agent_policy import decide_after_verification
+from api.services.conversation_guard import serialize_conversation
+from optiagent.recovery_runtime import RecoveryPolicyRuntime, load_recovery_runtime, workflow_observation
 from optiagent.mcp_servers.common import json_safe
 from optiagent.problem_spec import infer_problem_spec
 from optiagent.templates.registry import get_template
+from optiagent.instance_identity import instance_fingerprint
 
 
 AgentEventCallback = Callable[[dict[str, Any]], None]
@@ -50,6 +53,7 @@ class AgentWorkflowState(TypedDict, total=False):
     solver_attempt: int
     policy_decisions: Annotated[list[dict[str, Any]], add]
     trace_nodes: Annotated[list[dict[str, Any]], add]
+    trajectory_source: str
 
 
 NODE_DEFINITIONS = [
@@ -75,6 +79,7 @@ NODE_ACTIONS = {
 }
 
 
+@serialize_conversation
 def run_agent_workflow(
     *,
     question: str,
@@ -83,15 +88,20 @@ def run_agent_workflow(
     user_id: int | None,
     conversation_id: int | None,
     event_callback: AgentEventCallback | None = None,
+    recovery_checkpoint: str | None = None,
+    trajectory_source: str = "live_workflow",
 ) -> dict[str, Any]:
     """运行 LangGraph 状态图，并返回兼容现有前端的最终结果。"""
 
+    runtime = load_recovery_runtime(recovery_checkpoint)
+    # 会话标题来自用户本轮原话，不使用内部生成的规范化 JSON 请求。
+    touch_conversation(conversation_id, question.splitlines()[0] if question else None)
     episode_id = create_agent_episode(
         question,
         user_id,
         conversation_id,
-        policy_name="langgraph_baseline",
-        policy_version="1.0",
+        policy_name=runtime.name,
+        policy_version=runtime.version,
     )
     initial_state: AgentWorkflowState = {
         "question": question,
@@ -105,11 +115,12 @@ def run_agent_workflow(
         "solver_attempt": 0,
         "policy_decisions": [],
         "trace_nodes": [],
+        "trajectory_source": trajectory_source,
     }
     try:
         final_state = AGENT_GRAPH.invoke(
             initial_state,
-            config={"configurable": {"event_callback": event_callback}},
+            config={"configurable": {"event_callback": event_callback, "recovery_runtime": runtime}},
         )
         result = dict(final_state["result"])
         result["workflow_verification"] = final_state.get("verification", {})
@@ -121,11 +132,14 @@ def run_agent_workflow(
             "nodes": final_state.get("trace_nodes", []),
         }
         result["agent_policy"] = {
-            "name": "deterministic_recovery_baseline",
-            "version": "1.0",
+            "name": runtime.name,
+            "version": runtime.version,
             "decisions": final_state.get("policy_decisions", []),
         }
         run_id = result.get("run_id")
+        if (result.get("solution_verification") or {}).get("passed") and result["workflow_verification"].get("passed"):
+            from api.services.plan_comparison import compare_plans
+            result["plan_comparison"] = compare_plans(user_id, conversation_id, current=result)
         if isinstance(run_id, int):
             update_run_result(run_id, result)
         template_id = (
@@ -177,13 +191,26 @@ def _requirements_node(state: AgentWorkflowState) -> dict[str, Any]:
         conversation_id=state.get("conversation_id"),
     )
     payload = brief.model_dump(mode="json")
-    if brief.readiness == "needs_clarification":
+    dialogue_action = brief.dialogue_contract.get("action")
+    if brief.readiness == "needs_clarification" or dialogue_action in {"hold", "compare"}:
+        comparison = None
+        message = None
+        response_status = "NEEDS_CLARIFICATION"
+        if dialogue_action == "compare":
+            from api.services.plan_comparison import compare_plans
+            comparison = compare_plans(state.get("user_id"), state.get("conversation_id"))
+            message = comparison["message"]
+            response_status = "COMPARISON"
+        elif dialogue_action == "hold":
+            message = f"已保存需求版本 {brief.dialogue_contract['revision']}，本轮未求解。输入“继续求解”即可执行。"
+            response_status = "REQUIREMENT_UPDATED"
         result = build_clarification_result(
             question=original_question,
             brief=brief,
             requested_dataset_id=state.get("requested_dataset_id"),
             user_id=state.get("user_id"),
             conversation_id=state.get("conversation_id"),
+            response_status=response_status, message=message, comparison=comparison,
         )
         verification = {
             "scope": "requirement_completeness",
@@ -201,7 +228,7 @@ def _requirements_node(state: AgentWorkflowState) -> dict[str, Any]:
                 "deterministic": True,
                 "terminal": True,
             },
-            "note": "需求尚未完整，本轮主动追问且未调用 Solver。",
+            "note": "本轮返回需求或方案记录，未调用 Solver。" if message is not None else "需求尚未完整，本轮主动追问且未调用 Solver。",
         }
         return {
             "original_question": original_question,
@@ -209,7 +236,7 @@ def _requirements_node(state: AgentWorkflowState) -> dict[str, Any]:
             "requirement_route": "clarify",
             "result": result,
             "verification": verification,
-            "_trace_detail": f"需要澄清 · {len(brief.missing_information)} 项信息缺口",
+            "_trace_detail": message or f"需要澄清 · {len(brief.missing_information)} 项信息缺口",
         }
     return {
         "original_question": original_question,
@@ -227,6 +254,14 @@ def _route_after_requirements(state: AgentWorkflowState) -> str:
 
 
 def _planner_node(state: AgentWorkflowState) -> dict[str, Any]:
+    contract = (state.get("requirement_analysis") or {}).get("dialogue_contract") or {}
+    if contract.get("data"):
+        # 当前会话的显式输入优先，防止其他上传文件或旧数据集覆盖已确认的版本。
+        return {"execution_context": AskExecutionContext(
+            dataset_id=None, llm_config=None, uploaded_context=[], agent_plan=None,
+            plan_warning=None, preferred_template=contract["template_id"], solver_intent=True),
+            "requested_dataset_id": None,
+            "_trace_detail": f"{contract['template_id']} · 使用当前有效数据版本 {contract['revision']} · 执行优化"}
     context = prepare_ask_context(
         state["question"],
         state.get("requested_dataset_id"),
@@ -247,9 +282,19 @@ def _planner_node(state: AgentWorkflowState) -> dict[str, Any]:
 def _data_node(state: AgentWorkflowState) -> dict[str, Any]:
     context = state["execution_context"]
     uploaded = context.uploaded_context
+    fingerprint = None
     if context.dataset_id is not None:
         source_type = "structured_dataset"
         summary = f"使用结构化数据集 #{context.dataset_id}"
+        from api.database import load_dataset
+
+        # 结构化三表按实际消费内容分组，避免用会变化的数据库自增 ID 划分训练集。
+        data = load_dataset(context.dataset_id)
+        fingerprint = instance_fingerprint("facility_location", {
+            "warehouses": data.warehouses.to_dict(orient="records"),
+            "customers": data.customers.to_dict(orient="records"),
+            "costs": data.costs.to_dict(orient="records"),
+        })
     elif uploaded:
         roles = sorted({str(item.get("role") or "未分类") for item in uploaded})
         source_type = "uploaded_files"
@@ -265,6 +310,7 @@ def _data_node(state: AgentWorkflowState) -> dict[str, Any]:
             "source_type": source_type,
             "dataset_id": context.dataset_id,
             "uploaded_file_count": len(uploaded),
+            "instance_fingerprint": fingerprint,
         },
         "_trace_detail": summary,
     }
@@ -347,14 +393,11 @@ def _verifier_node(state: AgentWorkflowState) -> dict[str, Any]:
     return {"verification": verification, "_trace_detail": detail}
 
 
-def _policy_node(state: AgentWorkflowState) -> dict[str, Any]:
+def _policy_node(state: AgentWorkflowState, config: RunnableConfig | None = None) -> dict[str, Any]:
     """运行高层恢复策略，并把候选动作、mask 和选择原因写入状态。"""
 
-    decision = decide_after_verification(
-        state.get("verification") or {},
-        model_attempt=int(state.get("model_attempt", 0)),
-        solver_attempt=int(state.get("solver_attempt", 0)),
-    ).model_dump(mode="json")
+    runtime = (config or {}).get("configurable", {}).get("recovery_runtime") or RecoveryPolicyRuntime()
+    decision = runtime.decide(state).model_dump(mode="json")
     selected = decision["selected_action"]
     feedback = _verification_feedback(state.get("verification") or {}) if selected == "rebuild_model" else []
     return {
@@ -477,7 +520,8 @@ def _traced_node(
             },
         )
         try:
-            update = worker(state)
+            # 策略推理只执行一次，持久化采用同一份返回值。
+            update = worker(state, config) if worker is _policy_node else worker(state)
         except Exception as exc:
             elapsed_ms = round((perf_counter() - started) * 1000, 2)
             error = f"{type(exc).__name__}: {exc}"
@@ -527,6 +571,7 @@ def _traced_node(
             status="completed",
             elapsed_ms=elapsed_ms,
             reward=reward,
+            action=(update.get("policy_decisions") or [None])[-1] if node_id == "policy" else None,
             attempt=attempt,
         )
         trace = {
@@ -591,6 +636,8 @@ def _trajectory_state(state: AgentWorkflowState, node_id: str) -> dict[str, Any]
             "solver_attempt": state.get("solver_attempt", 0),
             "policy_decisions": state.get("policy_decisions", []),
             "completed_nodes": [item.get("node_id") for item in state.get("trace_nodes", [])],
+            "trajectory_source": state.get("trajectory_source", "unknown_legacy"),
+            "recovery_observation": workflow_observation(state) if node_id == "policy" else None,
         }
     )
 
@@ -599,12 +646,8 @@ def _trajectory_action(state: AgentWorkflowState, node_id: str) -> dict[str, Any
     """记录基线 policy 选择的动作及其最小参数集合。"""
 
     if node_id == "policy":
-        # Policy 节点的决策函数是纯函数，因此可在执行前完整记录实际动作。
-        return decide_after_verification(
-            state.get("verification") or {},
-            model_attempt=int(state.get("model_attempt", 0)),
-            solver_attempt=int(state.get("solver_attempt", 0)),
-        ).model_dump(mode="json")
+        # 开始时仅记录待决策状态；节点完成时原子写入实际动作。
+        return {"schema_version": "1.0", "type": "route", "status": "pending"}
     action_type, description = NODE_ACTIONS[node_id]
     problem_spec = state.get("problem_spec") or {}
     context = state.get("execution_context")

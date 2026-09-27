@@ -1,0 +1,12 @@
+# 本地交付锁定版本：CPython 3.14 / macOS arm64；由已通过验收的依赖闭包生成。
+# 不包含 Gurobi 许可证、Python 解释器或系统库；其他平台须另行验证。
+-r requirements-demo.lock
+filelock==3.32.6
+fsspec==2026.7.0
+jinja2==3.1.6
+markupsafe==3.0.3
+mpmath==1.3.0
+networkx==3.6.1
+setuptools==84.0.0
+sympy==1.14.0
+torch==2.14.0

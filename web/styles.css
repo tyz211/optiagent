@@ -1272,3 +1272,35 @@ th {
     animation: none;
   }
 }
+
+/* 普通对话显式进入演示页，不给原有求解请求附加故障参数。 */
+.repair-demo-link { color: inherit; font-size: 13px; text-decoration: none; padding: 8px 10px; border: 1px solid #d7e2ef; border-radius: 6px; }
+.repair-demo-link:focus-visible { outline: 3px solid #769ac8; outline-offset: 3px; }
+
+/* 用并列数值和真实版本号展示方案变化，沿用主对话页面的颜色与字号。 */
+.plan-comparison,.dialogue-revision {
+  border: 1px solid var(--agent-track);
+  border-radius: 14px;
+  padding: 18px;
+  background: #fff;
+  margin-top: 14px;
+  min-width: 0;
+}
+.plan-values { display:flex; flex-wrap:wrap; align-items:center; gap:20px; margin:16px 0; }
+.plan-values div { display:grid; gap:6px; }
+.plan-values strong { font:600 28px/1.2 ui-monospace,monospace; color:var(--agent-blue); }
+.plan-values small,.plan-comparison>small,.dialogue-revision>small { color:var(--muted); font-size:12px; line-height:1.6; }
+.dialogue-revision pre { white-space:pre; overflow:auto; max-height:260px; padding:12px; background:var(--soft); font-size:12px; }
+.dialogue-revision summary { cursor:pointer; margin:12px 0; }
+.dialogue-revision .suggestion-row { margin:12px 0; }
+button:disabled { opacity:.55; cursor:wait; }
+@media(max-width:600px) { .plan-values { gap:12px; } .plan-values strong { font-size:23px; } }
+
+/* 窄屏把操作栏放到标题下方，按钮可横向滚动，避免中文被挤成竖排。 */
+@media(max-width:600px) {
+  .chat-header { height:auto; flex:none; flex-direction:column; align-items:stretch; padding:12px; gap:10px; }
+  .top-actions { overflow-x:auto; max-width:100%; padding-bottom:4px; }
+  .top-actions > * { flex:0 0 auto; white-space:nowrap; }
+  .chat-stream { padding-right:0; }
+  .requirement-facts { grid-template-columns:1fr; }
+}

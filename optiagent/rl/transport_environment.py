@@ -14,6 +14,7 @@ from optiagent.rl.benchmark import BenchmarkSplit, TEMPLATE_IDS
 from optiagent.rl.environment import ACTION_IDS
 from optiagent.rl.mcp_transport import MCPTransportTrace, collect_mcp_transport_traces
 from optiagent.rl.real_environment import collect_real_recovery_tasks
+from optiagent.instance_identity import audit_instance_splits
 
 
 TRANSPORT_ENVIRONMENT_VERSION = "mcp-transport-recovery-v1"
@@ -46,6 +47,8 @@ class MCPTransportRecoveryTask(BaseModel):
     features: dict[str, float]
     clean_verification: dict[str, Any]
     contract_error_verification: dict[str, Any]
+    instance_fingerprint: str | None = None
+    instance_data: dict[str, Any] | None = None
 
 
 def collect_transport_recovery_tasks(
@@ -82,6 +85,7 @@ def collect_transport_recovery_tasks(
                 trace_fault = "timeout" if scenario == "persistent_timeout" else scenario
                 trace = trace_by_fault[trace_fault]
                 tasks.append(_build_transport_task(base, trace, scenario))
+    audit_instance_splits(tasks)
     return tasks
 
 
@@ -344,6 +348,8 @@ def _build_transport_task(base, trace: MCPTransportTrace, scenario: MCPTransport
     return MCPTransportRecoveryTask(
         task_id=f"{base.template_id}-{base.split}-mcp-{scenario}-{trace.trace_id}",
         template_id=base.template_id,
+        instance_fingerprint=base.instance_fingerprint,
+        instance_data=deepcopy(base.instance_data),
         split=base.split,
         scenario=scenario,
         recoverable=scenario != "persistent_timeout",

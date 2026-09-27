@@ -98,7 +98,7 @@ $$
 ### 阶段 D：Offline RL / Preference Optimization
 
 利用历史轨迹中的 solver/verifier reward 学习比行为策略更好的工具路由和失败恢复策略。离线训练适合个人项目：实验可复现、成本可控，也避免在线探索频繁产生无效求解。
-当前已在可控微型环境上实现 Action-Masked Double DQN，使用真实 Gateway/Solver/Verifier 输出构建成本感知恢复任务，并通过真实 MCP stdio 会话采集超时、子进程断连和非法结构返回。生产 trajectory store 的 offline RL、远程 Streamable HTTP 故障和真实 LLM 建模失败学习尚未完成。
+当前已在可控环境上实现 Action-Masked Double DQN，并提供固定工作流轨迹的 BC + Masked CQL 离线训练入口、奖励版本转换和独立主流程对照。真实 Gateway/Solver/Verifier 结果和 MCP stdio 故障轨迹已可采集；生产用户轨迹覆盖、远程 Streamable HTTP 故障和真实 LLM 建模失败学习仍待推进。
 
 ### 阶段 E：受约束的在线改进
 
@@ -142,7 +142,7 @@ $$
 
 | 研究组件 | 当前实现 | 下一步 |
 | --- | --- | --- |
-| Policy execution | LangGraph 条件状态图、四动作 Recovery Policy、有界重试、独立参数化 policy | 将学习策略接入主 LangGraph，并支持动态预算 |
+| Policy execution | LangGraph 条件状态图、四动作 Recovery Policy、有界重试、29/35 维学习策略可配置接入 | 补齐 transport 观测、动态预算与更多动作 |
 | Environment | MCP + Gateway、真实 stdio transport 故障，以及可独立 `reset/step` 的 RL 环境 | 扩展远程 HTTP、LLM 和生产网络故障 |
 | State | `AgentWorkflowState`、Verifier/成本/transport 反馈与 29/35/40 维版本化编码 | 加入 LLM 置信度、历史摘要和跨步工具上下文 |
 | Trajectory | episode/step store、候选动作、mask、`next_state` 与 decision transitions | 数据集版本、质量筛选和批量文件导出 |
@@ -170,4 +170,4 @@ $$
 
 ## 11. 项目定位边界
 
-OptiAgent 不把 RL 作为装饰性标签。项目现在已经具备 episode schema、reward、BC + Masked Double DQN、对照基线、独立 test split 和真实 MCP stdio 故障轨迹，因此可以声明已实现第一个 **transport-aware learned recovery policy**。但在学习策略接入主 LangGraph、覆盖 LLM 建模动作并通过更大规模未见 OR 实例之前，不宣称已实现“通用 RL Optimization Agent”。
+OptiAgent 已具备 episode schema、reward、BC + Masked Double DQN、对照基线、test split 和真实 MCP stdio 故障轨迹，并已将 29/35 维 checkpoint 接入主 LangGraph。40 维 transport-aware 策略尚在独立环境评测。在覆盖 LLM 建模动作并通过更大规模、实例内容去重的未见 OR 测试之前，不宣称已实现“通用 RL Optimization Agent”。

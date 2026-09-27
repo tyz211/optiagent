@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from statistics import mean
 from collections.abc import Callable
+from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -20,6 +22,16 @@ class RecoveryPolicyTrainingResult:
 
     agent: MaskedDoubleDQNAgent
     report: dict[str, Any]
+    bc_agent: MaskedDoubleDQNAgent
+    final_agent: MaskedDoubleDQNAgent
+
+    def save_comparisons(self, directory: Path, *, run_id: str) -> dict[str, Path]:
+        """保留 BC 与末轮 DQN 权重，使验证选模结果可独立复核。"""
+
+        return {
+            "bc_checkpoint": self.bc_agent.save(directory / "bc_policy.pt", metadata={"run_id": run_id, "stage": "bc"}),
+            "dqn_final_checkpoint": self.final_agent.save(directory / "dqn_final_policy.pt", metadata={"run_id": run_id, "stage": "dqn"}),
+        }
 
 
 @dataclass
@@ -28,6 +40,8 @@ class TrainingCoreResult:
 
     agent: MaskedDoubleDQNAgent
     metrics: dict[str, Any]
+    bc_agent: MaskedDoubleDQNAgent
+    final_agent: MaskedDoubleDQNAgent
 
 
 def train_recovery_policy(
@@ -55,6 +69,8 @@ def train_recovery_policy(
         "config": asdict(selected_config),
         "training": core.metrics,
         "evaluation": {
+            "bc_policy": evaluate_policy_splits(tasks, evaluate_policy, core.bc_agent.policy, selected_config.seed),
+            "dqn_final_policy": evaluate_policy_splits(tasks, evaluate_policy, core.final_agent.policy, selected_config.seed),
             "learned_policy": evaluate_policy_splits(tasks, evaluate_policy, agent.policy, selected_config.seed),
             "rule_policy": evaluate_policy_splits(tasks, evaluate_policy, recovery_baseline_policy, selected_config.seed),
             "random_valid_policy": evaluate_policy_splits(
@@ -65,7 +81,7 @@ def train_recovery_policy(
             ),
         },
     }
-    return RecoveryPolicyTrainingResult(agent=agent, report=report)
+    return RecoveryPolicyTrainingResult(agent=agent, report=report, bc_agent=core.bc_agent, final_agent=core.final_agent)
 
 
 def train_masked_dqn_core(
@@ -80,6 +96,12 @@ def train_masked_dqn_core(
     """统一执行 BC 预热、环境交互与 Masked Double DQN 更新。"""
 
     train_tasks = [item for item in tasks if item.split == "train"]
+    validation_tasks = [item for item in tasks if item.split == "validation"]
+    if config.train_episodes < 0 or config.bc_epochs < 0 or config.validation_interval <= 0:
+        raise ValueError("训练轮数不能为负，验证间隔必须为正。")
+    task_ids = [item.task_id for item in tasks]
+    if len(task_ids) != len(set(task_ids)):
+        raise ValueError("任务标识必须唯一，不能跨训练、验证和测试集重复。")
     if not train_tasks or not any(item.split == "validation" for item in tasks) or not any(
         item.split == "test" for item in tasks
     ):
@@ -96,11 +118,17 @@ def train_masked_dqn_core(
         demonstration_actions,
         demonstration_masks,
     )
+    # 保留独立 BC 快照；验证集选模从预热结束开始，测试集不参与选择。
+    bc_agent = deepcopy(agent)
+    best_agent = deepcopy(agent)
+    best_return = _validation_return(validation_tasks, environment_factory, agent)
+    selected_episode = 0
+    validation_history = [{"episode": 0, "average_return": best_return}]
     environment = environment_factory(train_tasks, seed=config.seed)
     replay_buffer = ReplayBuffer(config.replay_capacity, config.seed)
     dqn_losses: list[float] = []
     environment_steps = 0
-    for _ in range(config.train_episodes):
+    for episode in range(1, config.train_episodes + 1):
         observation, _ = environment.reset()
         terminated = False
         truncated = False
@@ -123,6 +151,14 @@ def train_masked_dqn_core(
                 dqn_losses.append(loss)
             observation = next_observation
             environment_steps += 1
+        if episode % config.validation_interval == 0 or episode == config.train_episodes:
+            score = _validation_return(validation_tasks, environment_factory, agent)
+            validation_history.append({"episode": episode, "average_return": score})
+            # 同分保留更早的 checkpoint，防止无证据地声称 RL 优于 BC。
+            if score > best_return + 1e-9:
+                best_return = score
+                best_agent = deepcopy(agent)
+                selected_episode = episode
     metrics = {
         "demonstration_count": int(len(demonstration_states)),
         "environment_steps": environment_steps,
@@ -132,8 +168,31 @@ def train_masked_dqn_core(
         "bc_final_loss": bc_losses[-1] if bc_losses else None,
         "dqn_average_loss": round(mean(dqn_losses), 8) if dqn_losses else None,
         "dqn_final_loss": dqn_losses[-1] if dqn_losses else None,
+        "selection": {
+            "split": "validation", "metric": "average_return",
+            "selected_episode": selected_episode,
+            "selected_stage": "bc" if selected_episode == 0 else "dqn",
+            "selected_optimization_steps": best_agent.optimization_steps,
+            "history": validation_history,
+        },
     }
-    return TrainingCoreResult(agent=agent, metrics=metrics)
+    return TrainingCoreResult(agent=best_agent, metrics=metrics, bc_agent=bc_agent, final_agent=agent)
+
+
+def _validation_return(tasks: list[Any], environment_factory: Callable[..., Any], agent: MaskedDoubleDQNAgent) -> float:
+    """独立环境做贪心验证，不向训练回放池添加任何验证样本。"""
+
+    environment = environment_factory(tasks, seed=agent.config.seed)
+    returns = []
+    for task in tasks:
+        observation, _ = environment.reset(task_id=task.task_id)
+        total = 0.0
+        terminated = truncated = False
+        while not (terminated or truncated):
+            observation, reward, terminated, truncated, _ = environment.step(agent.policy(observation))
+            total += reward
+        returns.append(total)
+    return float(mean(returns))
 
 
 def _collect_teacher_demonstrations(

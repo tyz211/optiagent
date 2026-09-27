@@ -27,13 +27,17 @@ OptiAgent is evolving into a two-track research platform. The first track learns
 
 ## Demo
 
+The frozen local delivery is **demo-2026.09.27**, with Python 3.14 on macOS arm64 as its validated baseline. The full archive carries the source snapshot and two hash-checked recovery checkpoints. Install `requirements-rl.lock` and run `.venv/bin/python scripts/verify_demo.py --profile full`. For rule-only operation, use `requirements-demo.lock` and `--profile core`; PyTorch and an LLM API key are not required.
+
+See the [reproducible delivery guide](docs/reproducible-release.md) for archive generation, checksums, checkpoint provenance and acceptance details. Weights are supplied in the local full archive, not in Git; no public download endpoint is assumed. Other operating systems and Python versions are outside this delivery's validated scope.
+
 UI demo:
 
-![OptiAgent UI Demo](/Users/tianyuanzhe/运筹优化/assets/ui-demo.png)
+![OptiAgent UI Demo](assets/ui-demo.png)
 
 Architecture:
 
-![OptiAgent Architecture](/Users/tianyuanzhe/运筹优化/assets/architecture.png)
+![OptiAgent Architecture](assets/architecture.png)
 
 ## Current Capabilities
 
@@ -44,12 +48,16 @@ Architecture:
 - Structured execution for optimization templates
 - Independent constraint/objective verification with deterministic reward signals
 - Built-in Document, Data, and Solver MCP servers with versioned problem/result contracts
-- A conditional LangGraph workflow with Planner, Data Agent, Modeler, Solver, Verifier, Policy, and Explainer nodes
+- A conditional LangGraph workflow with Requirement Analyst, Planner, Data Agent, Modeler, Solver, Verifier, Policy, and Explainer nodes
+- Persistent multi-turn requirements, versioned inline data, save-without-solve, resume, undo and verified plan comparison
+- Natural-language capacity changes for knapsack; complete JSON replacement for five inline templates
 - A typed recovery policy with candidate actions, action masks, and bounded modeling/solver retries
 - Live `agent_step` events and streaming answer output through `/api/ask/stream`
 - Versioned episode/step storage with state-action-observation and offline-training exports
 - A real Gateway/Solver/Verifier smoke benchmark covering six templates, schema faults, and tampered objectives
 - A learnable recovery policy using behavior-cloning warm-up and action-masked Double DQN
+- Fixed-dataset BC/CQL with content-isolated splits and five-seed controlled evaluations
+- A live repair page with explicit rule/previous/learned policy selection and isolated solver subprocesses
 - A transport-aware policy trained on real MCP stdio timeout, disconnect, and invalid-structure traces
 - Session-isolated file handling and SQLite persistence
 
@@ -69,6 +77,7 @@ Architecture:
 ```text
 User question / uploaded data
   -> LangGraph Agent Policy
+     -> Requirement Analyst -> clarify or proceed
      -> Planner -> Data Agent -> Modeler
      -> Solver -> MCP Gateway -> Document / Data / Solver MCP
      -> Verifier -> Policy -> accept / retry / rebuild / terminate
@@ -78,10 +87,10 @@ User question / uploaded data
 
 ## Repository Highlights
 
-- [README.md](/Users/tianyuanzhe/运筹优化/README.md): Chinese-first main project documentation
-- [examples/README.md](/Users/tianyuanzhe/运筹优化/examples/README.md): quick-start examples for visitors
-- [CHANGELOG.md](/Users/tianyuanzhe/运筹优化/CHANGELOG.md): notable project changes
-- [CONTRIBUTING.md](/Users/tianyuanzhe/运筹优化/CONTRIBUTING.md): contribution guidance
+- [README.md](README.md): Chinese-first main project documentation
+- [examples/README.md](examples/README.md): quick-start examples for visitors
+- [CHANGELOG.md](CHANGELOG.md): notable project changes
+- [CONTRIBUTING.md](CONTRIBUTING.md): contribution guidance
 - [docs/mcp-architecture.md](docs/mcp-architecture.md): MCP contracts, tools, configuration, and security boundaries
 - [docs/agent-workflow.md](docs/agent-workflow.md): observable LangGraph execution and SSE event contract
 - [docs/research-direction.md](docs/research-direction.md): research question, policy formulation, reward design, and experimental roadmap
@@ -106,10 +115,17 @@ PORT=8010 ./start.sh
 First-time setup:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+# 完整学习策略演示改用 requirements-rl.lock 与 --profile full。
+python3.14 -m venv .venv
+.venv/bin/python -m pip install -r requirements-demo.lock
+.venv/bin/python scripts/verify_demo.py --profile core
 ```
+
+The startup script defaults to one server process without reload. Use `RELOAD=1 ./start.sh` for development. The unpinned `requirements.txt` remains a development option, not a claim of frozen-environment acceptance.
+
+The acceptance command verifies locked dependencies, the source manifest when present, regression tests, seven dialogue turns and HTTP/SSE flows. It uses temporary databases. Full mode also verifies the two checkpoint hashes and executes all neural-policy tests. Reports are written to new directories under `artifacts/validation/`.
+
+The current product is a bounded local demo. Arbitrary constraint editing, general model-code repair, learned dialogue policies, production authentication and LLM SFT/GRPO are not completed. Controlled recovery experiments do not establish real-business gains.
 
 Manual backend launch:
 
@@ -152,9 +168,9 @@ This run launches isolated MCP subprocesses, captures normal, timeout, disconnec
 ## Example Inputs
 
 - Facility location: `data/facility_location_warehouses.csv`, `data/facility_location_customers.csv`, `data/facility_location_costs.csv`
-- Assignment: [examples/assignment_sample.json](/Users/tianyuanzhe/运筹优化/examples/assignment_sample.json)
-- Job shop scheduling: [examples/job_shop_scheduling_sample.json](/Users/tianyuanzhe/运筹优化/examples/job_shop_scheduling_sample.json)
-- Production mix: [examples/production_mix_sample.json](/Users/tianyuanzhe/运筹优化/examples/production_mix_sample.json)
+- Assignment: [examples/assignment_sample.json](examples/assignment_sample.json)
+- Job shop scheduling: [examples/job_shop_scheduling_sample.json](examples/job_shop_scheduling_sample.json)
+- Production mix: [examples/production_mix_sample.json](examples/production_mix_sample.json)
 
 ## Roadmap
 

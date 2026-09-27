@@ -33,6 +33,8 @@ class RequirementBrief(BaseModel):
     readiness: RequirementReadiness = "needs_clarification"
     summary: str = ""
     resolved_request: str = ""
+    # 保存结构化输入及不可变修订历史，避免后续补充继续消费旧 JSON。
+    dialogue_contract: dict[str, Any] = Field(default_factory=dict)
 
 
 def analyze_requirements(
@@ -54,6 +56,10 @@ def analyze_requirements(
         uploaded_files=files,
         dataset_id=dataset_id,
     )
+    from optiagent.dialogue_contract import update_contract, apply_contract
+    contract = update_contract(question, previous_brief.model_dump() if previous_brief else None)
+    if contract is not None:
+        return apply_contract(local, contract)
     if not llm_config or not llm_config.enabled or not _needs_llm_analysis(local, previous_brief):
         return local
     try:

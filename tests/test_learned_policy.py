@@ -65,6 +65,23 @@ class LearnedRecoveryPolicyTests(unittest.TestCase):
         )
         cls.training = train_recovery_policy(cls.tasks, cls.config)
 
+    def test_checkpoint_selection_uses_validation_and_preserves_bc_baseline(self) -> None:
+        """所选 checkpoint 对应最优验证回报，BC 对照在预热结束时冻结。"""
+
+        selection = self.training.report["training"]["selection"]
+        self.assertEqual("validation", selection["split"])
+        best = max(selection["history"], key=lambda row: row["average_return"])
+        self.assertEqual(best["episode"], selection["selected_episode"])
+        self.assertEqual(self.training.agent.optimization_steps, selection["selected_optimization_steps"])
+        self.assertIn("bc_policy", self.training.report["evaluation"])
+        self.assertIn("dqn_final_policy", self.training.report["evaluation"])
+        self.assertEqual(0, self.training.bc_agent.optimization_steps)
+        self.assertEqual(self.training.report["training"]["optimization_steps"], self.training.final_agent.optimization_steps)
+        with tempfile.TemporaryDirectory() as directory:
+            paths = self.training.save_comparisons(Path(directory), run_id="comparison-test")
+            restored = MaskedDoubleDQNAgent.load(paths["dqn_final_checkpoint"])
+            self.assertEqual(self.training.final_agent.optimization_steps, restored.optimization_steps)
+
     def test_behavior_cloning_reduces_teacher_action_loss(self) -> None:
         training = self.training.report["training"]
 

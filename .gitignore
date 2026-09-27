@@ -10,6 +10,8 @@ data/optiagent.sqlite3
 data/rl/*.jsonl
 data/benchmarks/*.json
 artifacts/rl/
+artifacts/releases/
+artifacts/validation/
 
 .env
 .env.*
@@ -31,3 +33,11 @@ docs/*
 !docs/learning-policy.md
 !docs/two-track-roadmap.md
 !docs/multi-turn-agent-roadmap.md
+!docs/rl-training-results.md
+!docs/project-status-2026-09-19.md
+!docs/offline-study.md
+!docs/offline-study-results.md
+!docs/repair-demo-training.md
+!docs/live-repair-demo.md
+!docs/demo-release.md
+!docs/reproducible-release.md

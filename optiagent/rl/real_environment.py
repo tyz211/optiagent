@@ -14,12 +14,14 @@ from optiagent.agent_policy import PolicyAction, decide_after_verification
 from optiagent.mcp_contracts import ProblemEnvelope, SolveEnvelope, SourceReference
 from optiagent.optimization_gateway import build_problem_envelope, solve_problem_envelope
 from optiagent.rl.benchmark import BenchmarkSplit, TEMPLATE_IDS
-from optiagent.rl.e2e_benchmark import EndToEndBenchmarkInstance, build_smoke_instances
+from optiagent.rl.e2e_benchmark import EndToEndBenchmarkInstance
 from optiagent.rl.environment import ACTION_IDS
 from optiagent.solution_verifier import verify_solution
+from optiagent.instance_identity import audit_instance_splits, instance_fingerprint
+from optiagent.rl.instances import generate_recovery_instance
 
 
-REAL_ENVIRONMENT_VERSION = "gateway-recovery-v1.1"
+REAL_ENVIRONMENT_VERSION = "gateway-recovery-v2.0"
 RealRecoveryScenario = Literal[
     "direct_success",
     "transient_solver_failure",
@@ -52,6 +54,8 @@ class RealRecoveryTask(BaseModel):
     clean_verification: dict[str, Any]
     tampered_verification: dict[str, Any]
     model_error_verification: dict[str, Any]
+    instance_fingerprint: str | None = None
+    instance_data: dict[str, Any] | None = None
 
 
 def collect_real_recovery_tasks(
@@ -61,6 +65,7 @@ def collect_real_recovery_tasks(
     splits: tuple[BenchmarkSplit, ...] = ("train", "validation", "test"),
     scenarios: tuple[RealRecoveryScenario, ...] = REAL_RECOVERY_SCENARIOS,
     time_limit: int = 10,
+    instances_per_split: int = 1,
 ) -> list[RealRecoveryTask]:
     """运行真实小规模优化问题，收集可复现的恢复训练任务。"""
 
@@ -68,19 +73,27 @@ def collect_real_recovery_tasks(
     unknown = set(selected_templates) - set(TEMPLATE_IDS)
     if unknown:
         raise ValueError(f"未知优化模板：{sorted(unknown)}")
+    if instances_per_split < 1 or not selected_templates or not scenarios or not splits:
+        raise ValueError("实例数、模板、场景和数据划分均不能为空。")
+    if len(set(splits)) != len(splits) or set(splits) - {"train", "validation", "test"}:
+        raise ValueError("数据划分必须合法且唯一。")
+    if len(set(selected_templates)) != len(selected_templates) or len(set(scenarios)) != len(scenarios):
+        raise ValueError("模板和场景不能重复。")
+    if set(scenarios) - set(REAL_RECOVERY_SCENARIOS):
+        raise ValueError("未知恢复场景。")
     tasks: list[RealRecoveryTask] = []
-    for split_index, split in enumerate(splits):
-        for scenario_index, scenario in enumerate(scenarios):
-            instance_seed = seed + split_index * 1000 + scenario_index * 100
-            instances = {item.template_id: item for item in build_smoke_instances(seed=instance_seed)}
+    for split in splits:
+        for index in range(instances_per_split):
             for template_id in selected_templates:
-                task = _collect_task(
-                    instances[template_id],
-                    split=split,
-                    scenario=scenario,
-                    time_limit=time_limit,
-                )
-                tasks.append(task)
+                instance = generate_recovery_instance(template_id, seed=seed, split=split, index=index)
+                # 同一实例仅求解一次，所有故障变体共享同一参考与集合。
+                base = _collect_task(instance, split=split, scenario=scenarios[0], time_limit=time_limit)
+                for scenario in scenarios:
+                    tasks.append(base.model_copy(deep=True, update={
+                        "task_id": f"{instance.task_id}:{scenario}", "scenario": scenario,
+                        "recoverable": scenario != "persistent_failure",
+                    }))
+    audit_instance_splits(tasks)
     return tasks
 
 
@@ -368,6 +381,8 @@ def _collect_task(
     return RealRecoveryTask(
         task_id=f"{instance.template_id}-{split}-{scenario}-{instance.task_id}",
         template_id=instance.template_id,
+        instance_data=deepcopy(instance.data),
+        instance_fingerprint=instance_fingerprint(instance.template_id, instance.data),
         split=split,
         scenario=scenario,
         recoverable=scenario != "persistent_failure",

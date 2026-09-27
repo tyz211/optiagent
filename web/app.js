@@ -29,9 +29,11 @@ const state = {
   activeDatasetId: null,
   activeConversationId: Number(localStorage.getItem("optiagent_active_conversation_id") || 0) || null,
   hasData: false,
+  hasRuns: false,
   token: localStorage.getItem("optiagent_session_token") || "",
   conversations: [],
   conversationSearch: "",
+  asking: false,
 };
 
 const fmt = (value) => {
@@ -155,6 +157,7 @@ async function loadAll() {
   const summary = summaryResult || { has_data: false, warehouses: [], customers: [] };
   state.activeDatasetId = datasets.active_dataset_id;
   state.hasData = Boolean(summary.has_data || (datasets.uploaded_files || []).length);
+  state.hasRuns = Boolean((runs.runs || []).length);
   renderDataVisibility();
   renderConversations();
   renderDatasets(datasets.datasets, datasets.active_dataset_id);
@@ -191,7 +194,7 @@ function setActiveConversation(conversationId) {
 
 function renderDataVisibility() {
   byId("askPanel")?.classList.remove("hidden");
-  byId("emptyState")?.classList.toggle("hidden", state.hasData);
+  byId("emptyState")?.classList.toggle("hidden", state.hasData || state.hasRuns);
 }
 
 function renderDatasetHeader(summary) {
@@ -382,6 +385,7 @@ function appendWelcomeMessage() {
     <div class="message-body">
       <p>你好，你可以先描述业务目标。我会在当前对话中持续整理目标、约束和数据缺口，信息足够后再建模求解。</p>
       <div class="suggestion-row">
+        <button class="suggestion" data-example="knapsack">载入背包演示数据</button>
         <button class="suggestion">分析当前供应链数据</button>
         <button class="suggestion">求解一个背包问题</button>
         <button class="suggestion">做员工班次指派</button>
@@ -396,9 +400,13 @@ async function ask() {
   const status = byId("runStatus");
   const input = byId("questionInput");
   const question = input?.value.trim() || "";
-  if (!question) {
+  if (!question || state.asking) {
     return;
   }
+  state.asking = true;
+  byId("askBtn").disabled = true;
+  // 求解期间保持会话与数据来源稳定，防止结果被插入刚切换的其他对话。
+  document.querySelectorAll(".sidebar,.top-actions,.config-drawer").forEach(el => { el.inert = true; });
   setText("runStatus", "连接中...");
   appendUserMessage(question);
   const streamingMessage = appendStreamingAssistantMessage();
@@ -427,10 +435,14 @@ async function ask() {
     streamingMessage.remove();
     appendAssistantMessage(result);
     setText("runStatus", "完成");
-    loadAll().catch((err) => console.error(err));
+    await loadAll();
   } catch (err) {
     setText("runStatus", "失败");
     streamingMessage.fail(err.message);
+  } finally {
+    state.asking = false;
+    byId("askBtn").disabled = false;
+    document.querySelectorAll(".sidebar,.top-actions,.config-drawer").forEach(el => { el.inert = false; });
   }
 }
 
@@ -760,7 +772,7 @@ function appendAssistantMessage(result) {
   const answer = result.structured_answer?.raw_answer || result.answer || "";
   const answerBlock = result.generic_result || result.structured_answer ? "" : `<div class="answer">${escapeHtml(answer)}</div>`;
   const requirementAnalysis = buildRequirementAnalysisHtml(result.requirement_analysis);
-  const resultTitle = result.status === "NEEDS_CLARIFICATION" ? "需求分析" : "优化结论";
+  const resultTitle = ({NEEDS_CLARIFICATION: "需求分析", REQUIREMENT_UPDATED: "需求已更新", COMPARISON: "方案比较"})[result.status] || "优化结论";
   const toolNames = (result.tool_names || []).map((name) => `<span>${escapeHtml(name)}</span>`).join("");
   const ragDocs = (result.rag_docs || []).map((name) => `<span>${escapeHtml(name)}</span>`).join("");
   const graphNodes = result.agent_graph?.nodes || [];
@@ -820,6 +832,8 @@ function appendAssistantMessage(result) {
         ${answerBlock}
       </div>
       ${requirementAnalysis ? `<div class="requirement-card">${requirementAnalysis}</div>` : ""}
+      ${buildPlanComparisonHtml(result.plan_comparison)}
+      ${buildDialogueControlsHtml(result)}
       ${graphCard}
       ${tableCard}
       ${analysis.trim() ? `<div class="model-card">
@@ -833,7 +847,45 @@ function appendAssistantMessage(result) {
     </div>
   `;
   stream.appendChild(article);
+  bindSuggestionButtons(article);
+  article.querySelector(".download-plan")?.addEventListener("click", () => {
+    // 下载当前这条消息的完整记录，后续编辑不会改变该方案内容。
+    const url = URL.createObjectURL(new Blob([JSON.stringify(result, null, 2)], {type: "application/json"}));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `optiagent-plan-${result.run_id || "result"}.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
   scrollChatToBottom();
+}
+
+function buildPlanComparisonHtml(comparison) {
+  // 比较的是两次已验算结果，不把不同业务条件下的增减标成算法优劣。
+  if (!comparison?.available) return "";
+  const labels = {capacity: "容量上限", items: "物品数据", resources: "资源", tasks: "任务", costs: "成本", products: "产品", capacities: "资源容量", distance_matrix: "距离矩阵", distances: "距离", nodes: "地点", integer: "整数要求"};
+  const changeText = comparison.input_diff_available === false ? "旧方案未记录结构化版本，无法确定输入变化。"
+    : comparison.changed_fields.length ? `变化内容：${comparison.changed_fields.map(field => labels[field] || field).join("、")}` : "有效输入未变化";
+  return `<section class="plan-comparison"><div class="card-title"><span>方案变化</span><span>同一对话 · 已验算</span></div>
+    <div class="plan-values"><div><small>上次方案 #${escapeHtml(comparison.before_run_id)}</small><strong>${escapeHtml(fmt(comparison.before_objective))}</strong></div>
+    <span aria-hidden="true">→</span><div><small>本次方案 #${escapeHtml(comparison.after_run_id)}</small><strong>${escapeHtml(fmt(comparison.after_objective))}</strong></div>
+    <div><small>目标值变化</small><strong>${comparison.delta > 0 ? "+" : ""}${escapeHtml(fmt(comparison.delta))}</strong></div></div>
+    <p>${escapeHtml(changeText)}</p>
+    <small>${escapeHtml(comparison.note)}</small></section>`;
+}
+
+function buildDialogueControlsHtml(result) {
+  const contract = result.requirement_analysis?.dialogue_contract;
+  if (!contract?.data) return "";
+  const changes = (contract.changes || []).map(change => change.field === "capacity"
+    ? `容量：${change.before} → ${change.after}` : ({initialize: "载入初始数据", replace_data: "替换完整数据", undo: "撤销修改并恢复数据"})[change.operation]).filter(Boolean);
+  return `<section class="dialogue-revision"><div class="card-title"><span>本次使用的数据</span><span>版本 ${escapeHtml(contract.revision)}</span></div>
+    ${changes.length ? `<p>${changes.map(escapeHtml).join("；")}</p>` : ""}
+    <details><summary>查看有效数据</summary><pre>${escapeHtml(JSON.stringify(contract.data, null, 2))}</pre></details>
+    <div class="suggestion-row">${contract.template_id === "knapsack" ? '<button class="suggestion">把容量改成 3</button>' : ""}
+      <button class="suggestion">继续求解</button><button class="suggestion">撤销上次修改</button>
+      <button class="suggestion">比较最近两个方案</button><button class="download-plan">下载本次记录</button></div>
+    <small>快捷操作会填入输入框，发送后作用于当前会话的最新版本。</small></section>`;
 }
 
 function buildRequirementAnalysisHtml(brief) {
@@ -1103,7 +1155,9 @@ function bindSuggestionButtons(root = document) {
     button.addEventListener("click", () => {
       const input = byId("questionInput");
       if (input) {
-        input.value = button.textContent;
+        input.value = button.dataset.example === "knapsack"
+          ? '求解背包问题，最大化总价值。以下为演示数据：\n' + JSON.stringify({capacity: 5, items: [{item: "A", value: 8, weight: 3}, {item: "B", value: 5, weight: 2}]}, null, 2)
+          : button.textContent;
         input.focus();
       }
     });
@@ -1140,6 +1194,7 @@ on("loginBtn", "click", login);
 on("refreshBtn", "click", refreshAll);
 on("clearHistoryBtn", "click", clearHistory);
 on("newConversationBtn", "click", newConversation);
+on("newChatBtn", "click", newConversation);
 on("providerSelect", "change", updateModelOptions);
 on("datasetFiles", "change", uploadDataset);
 on("conversationSearch", "input", (event) => {

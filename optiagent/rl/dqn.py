@@ -40,6 +40,7 @@ class DQNConfig:
     bc_epochs: int = 120
     bc_learning_rate: float = 2e-3
     train_episodes: int = 800
+    validation_interval: int = 100
     device: str = "cpu"
 
 
@@ -125,7 +126,7 @@ class MaskedDoubleDQNAgent:
 
         mask = self.state_encoder.encode_mask(observation)
         valid_indices = np.flatnonzero(mask).tolist()
-        if self._randomizer.random() < epsilon:
+        if epsilon > 0.0 and self._randomizer.random() < epsilon:
             return int(self._randomizer.choice(valid_indices))
         state = torch.as_tensor(self.state_encoder.encode(observation), device=self.device).unsqueeze(0)
         with torch.no_grad():
@@ -246,6 +247,7 @@ class MaskedDoubleDQNAgent:
         agent.target_network.load_state_dict(payload["target_state_dict"])
         agent.optimizer.load_state_dict(payload["optimizer_state_dict"])
         agent.optimization_steps = int(payload.get("optimization_steps", 0))
+        agent.checkpoint_metadata = payload.get("metadata", {})
         return agent
 
 

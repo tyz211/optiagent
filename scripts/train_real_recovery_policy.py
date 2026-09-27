@@ -30,15 +30,25 @@ def main() -> None:
     parser.add_argument("--episodes", type=int, default=1200)
     parser.add_argument("--bc-epochs", type=int, default=160)
     parser.add_argument("--time-limit", type=int, default=10)
+    parser.add_argument("--threads", type=int, default=1)
+    parser.add_argument("--validation-interval", type=int, default=100)
+    parser.add_argument("--instances-per-split", type=int, default=4)
     parser.add_argument("--output-root", default="artifacts/rl/runs")
     parser.add_argument("--run-id", default=None)
     args = parser.parse_args()
+    if args.threads < 1:
+        parser.error("--threads 必须为正整数。")
+    import torch
+
+    # 小型网络用单线程避免线程调度开销，同时明确记录运行设置。
+    torch.set_num_threads(args.threads)
 
     config = DQNConfig(
         seed=args.seed,
         train_episodes=args.episodes,
         bc_epochs=args.bc_epochs,
         epsilon_decay_steps=max(800, args.episodes),
+        validation_interval=args.validation_interval,
     )
     recorder = TrainingRunRecorder(
         args.output_root,
@@ -49,6 +59,9 @@ def main() -> None:
             "episodes": args.episodes,
             "bc_epochs": args.bc_epochs,
             "time_limit": args.time_limit,
+            "threads": args.threads,
+            "validation_interval": args.validation_interval,
+            "instances_per_split": args.instances_per_split,
             "environment_version": REAL_ENVIRONMENT_VERSION,
             "llm_used_for_training": False,
         },
@@ -56,7 +69,7 @@ def main() -> None:
     )
     task_path = recorder.paths.run_directory / "real_gateway_tasks.json"
     try:
-        tasks = collect_real_recovery_tasks(seed=args.seed, time_limit=args.time_limit)
+        tasks = collect_real_recovery_tasks(seed=args.seed, time_limit=args.time_limit, instances_per_split=args.instances_per_split)
         task_path.write_text(
             json.dumps([item.model_dump(mode="json") for item in tasks], ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -69,11 +82,13 @@ def main() -> None:
                 "algorithm": training.report["algorithm"],
                 "environment_version": REAL_ENVIRONMENT_VERSION,
                 "evaluation": training.report["evaluation"],
+                "selection": training.report["training"]["selection"],
             },
         )
         report_path = recorder.paths.report
         report_path.write_text(json.dumps(training.report, ensure_ascii=False, indent=2), encoding="utf-8")
-        record = recorder.complete(training.report, extra_artifacts={"real_gateway_tasks": task_path})
+        comparisons = training.save_comparisons(recorder.paths.run_directory, run_id=recorder.paths.run_id)
+        record = recorder.complete(training.report, extra_artifacts={"real_gateway_tasks": task_path, **comparisons})
     except BaseException as exc:
         recorder.fail(exc)
         raise
