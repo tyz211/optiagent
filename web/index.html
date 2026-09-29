@@ -121,6 +121,7 @@
           <div class="message-body">
               <p>你好，你可以先描述业务目标。我会通过多轮对话整理目标、约束和数据缺口，信息足够后再建模求解。</p>
               <div class="suggestion-row">
+                <button class="suggestion" data-example="linear">载入数学模型示例</button>
                 <button class="suggestion">分析当前供应链数据</button>
                 <button class="suggestion">求解一个背包问题</button>
                 <button class="suggestion">做员工班次指派</button>
@@ -131,7 +132,7 @@
 
         <section id="askPanel" class="composer-wrap">
           <div class="composer">
-            <textarea id="questionInput" rows="2" placeholder="先描述你的业务需求，例如：我想降低配送成本，但还不确定应该如何建模。"></textarea>
+            <textarea id="questionInput" rows="2" placeholder="描述业务需求，或直接粘贴变量范围、目标函数和约束（支持数学文本 / LaTeX，无需上传表格）。"></textarea>
             <div class="composer-actions">
               <button data-panel="uploadPanel" class="icon-button">+</button>
               <button data-panel="llmPanel">模型 <span id="llmState">未配置</span></button>
@@ -142,6 +143,6 @@
         </section>
       </section>
     </main>
-    <script src="/static/app.js?v=20260923-dialogue-revisions-3"></script>
+    <script src="/static/app.js?v=20260928-linear-model-1"></script>
   </body>
 </html>

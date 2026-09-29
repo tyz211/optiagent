@@ -40,6 +40,7 @@ def solver_list_capabilities() -> list[SolverCapability]:
         )
     ]
     input_keys = {
+        "linear_program": ["variables", "objective", "constraints"],
         "knapsack": ["items", "capacity"],
         "assignment": ["resources", "tasks", "costs"],
         "tsp": ["distances 或 distance_matrix"],
@@ -47,6 +48,7 @@ def solver_list_capabilities() -> list[SolverCapability]:
         "production_mix": ["products", "capacities"],
     }
     exact = {
+        "linear_program": True,
         "knapsack": True,
         "assignment": True,
         "tsp": False,

@@ -125,6 +125,15 @@ def generic_answer_text(generic_result, problem_spec, rag_notes: list[str]) -> s
     """按通用优化模板生成用户可读的答案摘要。"""
 
     evidence = "；".join(rag_notes[:2]) if rag_notes else "已检索本地运筹优化知识库。"
+    if generic_result.template_id == "linear_program":
+        # 直接数学输入不需要上传表格，失败状态也不包装成已经成功求解。
+        values = "，".join(f"{row['variable']}={row['value']:g}" for row in generic_result.decisions)
+        verified = generic_result.solution_verification.get('passed', False)
+        return "\n".join(filter(None, [
+            "已直接读取数学模型，无需上传数据文件。", generic_result.summary,
+            f"变量取值：{values}。" if values else "",
+            "全部变量域、线性约束与目标值已独立复算通过。" if verified else "当前结果未通过完整验算，不能作为已验证方案。",
+        ]))
     if generic_result.template_id == "knapsack":
         selected = [row for row in generic_result.decisions if row.get("selected") == 1]
         selected_items = ", ".join(_display_item_name(row["item"]) for row in selected) or "无"
@@ -462,6 +471,9 @@ def _generic_extra_metrics(generic_result) -> list[dict[str, object]]:
 
     metrics = generic_result.metrics or {}
     quality = _quality_extra_metrics(generic_result.status, metrics)
+    if generic_result.template_id == "linear_program":
+        return [{"label": "变量数", "value": metrics.get("variable_count")},
+                {"label": "约束数", "value": metrics.get("constraint_count")}, *quality]
     if generic_result.template_id == "knapsack":
         return [
             {"label": "容量使用", "value": metrics.get("used_weight"), "suffix": f"/{metrics.get('capacity')}"},

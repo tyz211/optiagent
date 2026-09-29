@@ -826,6 +826,12 @@ def _gurobi_status_name(status_code: int) -> str:
 
 
 def _register_builtin_solvers() -> None:
+    # 使用独立适配器保留任意线性约束，避免套用业务模板而丢失数学条件。
+    from optiagent.linear_solver import extract_linear_data, solve_linear_model
+    register_generic_solver(GenericSolverAdapter(
+        template_id="linear_program", display_name="文本线性规划 / 整数规划",
+        solver_name="Gurobi LP/MILP", solve=solve_linear_model, extract_from_question=extract_linear_data,
+    ))
     register_generic_solver(
         GenericSolverAdapter(
             template_id="knapsack",

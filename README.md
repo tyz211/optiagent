@@ -14,7 +14,7 @@
 
 [English](README_EN.md) · [快速开始](#快速开始) · [复现与验收](docs/reproducible-release.md)
 
-**当前阶段：可交互的本地研究 Demo。** 已完成六类模板求解、独立数学验算、多轮数据修订和恢复策略受控实验；通用约束编译、真实业务泛化验证和 LLM SFT/GRPO 尚未完成。默认演示无需 LLM API Key。
+**当前阶段：可交互的本地研究 Demo。** 已完成六类业务模板、直接数学文本/LaTeX 的 LP/MILP 求解、独立数学验算、多轮数据修订和恢复策略受控实验。任意自然语言约束编译、非线性模型、真实业务泛化验证和 LLM SFT/GRPO 尚未完成。默认演示无需 LLM API Key。
 
 该项目尝试把 **自然语言理解、结构化建模、RAG、工具路由、求解器执行、结果验证与策略学习** 串成一条完整闭环，让用户可以像和分析助手对话一样提出优化问题，并得到可审计、可解释、可执行的求解结果。
 
@@ -27,6 +27,8 @@ $$
 重点不只是让 LLM “生成一个模型”，而是学习一个可评估、可改进的 Agent policy，使系统能在澄清、检索、建模、工具选择、求解、验证和修复之间作出序列决策。完整定义见 [研究方向文档](docs/research-direction.md)。
 
 ## 当前 Demo 交付入口
+
+**不用上传文件也能求解。** 在主对话中直接粘贴变量取值范围、`max/min` 目标和逐行线性约束，或点击「载入数学模型示例」。支持 `x_1` / `x_{1}` 下标、二元/整数/连续变量、有限整数集合、常数乘除和线性逻辑约束；解析不了的条件会明确追问，不会静默忽略。[完整示例与输入边界](examples/linear_program_sample.md)包含 10 个变量、8 条约束，最优目标为 46。旧恢复模型未训练过这一新类型，因此使用规则恢复。此能力是 2026-09-28 的源码更新，不在下述已经冻结的 2026-09-27 压缩包中。
 
 运行 `./start.sh`，打开主对话页，新建对话后点击「载入背包演示数据」。现已支持有效输入版本、背包容量修改、先保存不求解、继续求解、撤销修改、已验算方案对比和记录下载。五类内联 JSON 模板可跨轮复用或替换完整数据；仓库选址沿用三表入口。详细操作范围、验收步骤和已知限制见 [Demo 交付说明](docs/demo-release.md)。
 
@@ -166,6 +168,7 @@ OptiAgent 的长期方向由两条相互闭环的主线组成：第一部分是�
 
 | 模板 | `template_id` | 数据入口 | 求解方式 | 结果状态 |
 | --- | --- | --- | --- | --- |
+| 显式线性 / 整数规划 | `linear_program` | 数学文本、LaTeX 或规范模型 JSON，无需上传表格 | Gurobi LP/MILP + 独立验算 | `OPTIMAL`、`FEASIBLE` 或明确失败状态 |
 | 仓库选址与客户分配 | `facility_location` | 三个 CSV：`warehouses/customers/costs` | Gurobi MILP | `OPTIMAL`、`NEAR_OPTIMAL` 或 Gurobi 状态 |
 | 0-1 背包 | `knapsack` | JSON 或 CSV：`item/value/weight` | Gurobi IP | `OPTIMAL` 或 `NEAR_OPTIMAL` |
 | 指派匹配 | `assignment` | JSON 或 CSV：`resource/task/cost` | Gurobi MILP | `OPTIMAL` 或 `NEAR_OPTIMAL` |

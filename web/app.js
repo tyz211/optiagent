@@ -386,6 +386,7 @@ function appendWelcomeMessage() {
       <p>你好，你可以先描述业务目标。我会在当前对话中持续整理目标、约束和数据缺口，信息足够后再建模求解。</p>
       <div class="suggestion-row">
         <button class="suggestion" data-example="knapsack">载入背包演示数据</button>
+        <button class="suggestion" data-example="linear">载入数学模型示例</button>
         <button class="suggestion">分析当前供应链数据</button>
         <button class="suggestion">求解一个背包问题</button>
         <button class="suggestion">做员工班次指派</button>
@@ -1081,6 +1082,14 @@ function buildDecisionTableHtml(result) {
 
 function buildGenericDecisionTableHtml(generic) {
   const decisions = generic.decisions || [];
+  // 数学模型同时展示全部变量值与约束左右端，方便逐条核对输入。
+  if (generic.template_id === "linear_program" && decisions.length) {
+    const kinds = { binary: "二元变量", integer: "整数变量", continuous: "连续变量" };
+    const variables = buildTableHtml(["变量", "取值", "类型"], decisions.map((row) => [row.variable, fmt(row.value), kinds[row.kind] || row.kind]));
+    const activity = generic.metrics?.constraint_activity || [];
+    const constraints = buildTableHtml(["约束", "表达式（移项后）", "左端值", "关系", "右端值"], activity.map((row) => [row.constraint, row.expression, fmt(row.lhs), row.sense, fmt(row.rhs)]));
+    return { title: "变量取值与约束核对", html: variables + constraints };
+  }
   if (!decisions.length) {
     return { title: generic.display_name || "", html: escapeHtml(generic.summary || "") };
   }
@@ -1150,6 +1159,21 @@ function appendErrorMessage(message) {
   scrollChatToBottom();
 }
 
+// 直接数学输入演示：所有变量域和约束都在消息内，无需上传文件。
+const LINEAR_MODEL_EXAMPLE = `x1,x2,x3,x4,x5,x9,x10 in {0,1}
+x6 in {0,1,2}
+x7 in {0,1,2,3}
+x8 in {0,1,2}
+max 10x1+8x2+15x3+4x4+7x5+9x6+4x7+5x8+6x9+6x10
+4x1+3x2+6x3+x4+2x5+4x6+2x7+x8+5x9+2x10 <= 15
+3x1+3x2+4x3+x4+2x5+3x6+2x7+x8+4x9+x10 <= 12
+x1+x2 <= 1
+x3 <= x4
+x5 <= x6+x7
+x6 >= x1+x3
+x8 >= x1
+x8 >= x2`;
+
 function bindSuggestionButtons(root = document) {
   root.querySelectorAll(".suggestion").forEach((button) => {
     button.addEventListener("click", () => {
@@ -1157,7 +1181,7 @@ function bindSuggestionButtons(root = document) {
       if (input) {
         input.value = button.dataset.example === "knapsack"
           ? '求解背包问题，最大化总价值。以下为演示数据：\n' + JSON.stringify({capacity: 5, items: [{item: "A", value: 8, weight: 3}, {item: "B", value: 5, weight: 2}]}, null, 2)
-          : button.textContent;
+          : button.dataset.example === "linear" ? LINEAR_MODEL_EXAMPLE : button.textContent;
         input.focus();
       }
     });

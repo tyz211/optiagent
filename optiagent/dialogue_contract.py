@@ -12,9 +12,11 @@ from optiagent.templates.registry import get_template
 
 # 对话编辑只改变已经能被 Gateway 消费的字段，不把自然语言约束冒充可执行约束。
 ALIASES = {'knapsack': 'knapsack', 'assignment': 'assignment', 'tsp': 'tsp',
+           'linear_program': 'linear_program',
            'job_shop': 'job_shop_scheduling', 'scheduling': 'job_shop_scheduling',
            'production': 'production_mix', 'production_mix': 'production_mix'}
 SHAPES = {'knapsack': {'items', 'capacity'}, 'assignment': {'resources', 'tasks', 'costs'},
+          'linear_program': {'variables', 'objective', 'constraints'},
           'job_shop_scheduling': {'tasks'}, 'production_mix': {'products', 'capacities'}}
 
 
@@ -37,6 +39,17 @@ def update_contract(question: str, previous: dict | None) -> dict | None:
     text = question.strip()
     payload = _extract_json_payload(text)
     template, data = identify(payload) if payload is not None else (None, {})
+    if payload is None:
+        # 数学文本和 JSON 形成相同版本合同；解析失败不能覆盖已有有效输入。
+        from optiagent.linear_model import parse_linear_text
+        try:
+            parsed = parse_linear_text(text)
+        except ValueError as exc:
+            state = deepcopy(old)
+            state.update(action='clarify', changes=[], error=f'数学模型尚不能完整解析：{str(exc)[:1800]}')
+            return state
+        if parsed is not None:
+            template, data = 'linear_program', parsed
     if not template and not old:
         return None
     state = deepcopy(old)
@@ -137,6 +150,10 @@ def apply_contract(brief, state: dict):
         retained = [text for text in brief.constraints if text in {'总重量不能超过容量', '总重量不超过容量'}]
         brief.constraints = list(spec.constraints)
         brief.constraints.extend(retained)
+        if brief.template_id == 'linear_program':
+            # 在需求摘要中展示真正执行的目标和约束，而不是空泛的模板介绍。
+            from optiagent.linear_solver import describe_linear_model
+            brief.objective, _, brief.constraints = describe_linear_model(state['data'])
         if brief.template_id == 'knapsack':
             brief.constraints.append(f"当前容量上限：{float(state['data']['capacity']):g}")
         brief.data_sources = [f"会话内结构化数据 · 版本 {state['revision']}"]

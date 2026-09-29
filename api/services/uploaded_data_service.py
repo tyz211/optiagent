@@ -22,6 +22,7 @@ from optiagent.schema_mapping import (
 
 # 当前已具备完整数据适配与求解链路的通用优化模板。
 EXECUTABLE_TEMPLATE_IDS = {
+    "linear_program",
     "knapsack",
     "assignment",
     "tsp",
@@ -37,6 +38,14 @@ def problem_spec_for_template(question: str, template_id: str):
 
     if template_id:
         try:
+            if template_id == "linear_program":
+                # 展示当前执行合同，避免数学模型结果仍显示通用占位目标。
+                from dataclasses import replace
+                from optiagent.linear_solver import describe_linear_model, extract_linear_data
+                data, _, _ = extract_linear_data(question)
+                objective, variables, constraints = describe_linear_model(data)
+                return replace(get_template(template_id).build_spec(question, None),
+                               objective=objective, decision_variables=variables, constraints=constraints)
             return get_template(template_id).build_spec(question, None)
         except KeyError:
             pass
@@ -302,6 +311,9 @@ def solve_json_generic(question: str, preferred_template: str | None = None):
     else:
         problem_spec = infer_problem_spec(question, None)
     result = solve_question_via_gateway(question, problem_spec)
+    if result and result.template_id == "linear_program":
+        # 求解器故障也要保留真实状态，不能回落成误导性的“请上传 CSV”。
+        return result
     if result and result.status not in {"ERROR", "INVALID_DATA", "SOLVER_ERROR"}:
         return result
     return None

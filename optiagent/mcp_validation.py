@@ -15,7 +15,15 @@ def validate_problem_data(template_id: str, data: dict[str, Any]) -> ValidationR
     errors: list[str] = []
     warnings: list[str] = []
     checks: dict[str, Any] = {}
-    if template_id == "facility_location":
+    if template_id == "linear_program":
+        # 同一合同校验用于文本、JSON 和 MCP，禁止绕过变量引用及数值检查。
+        from optiagent.linear_model import LinearModel
+        try:
+            model = LinearModel.model_validate(data)
+            checks.update(variable_count=len(model.variables), constraint_count=len(model.constraints))
+        except ValueError as exc:
+            errors.append(f"线性模型不完整或格式错误：{str(exc)[:1800]}")
+    elif template_id == "facility_location":
         try:
             supply_data = normalize_data(
                 SupplyChainData(

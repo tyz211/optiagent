@@ -12,7 +12,9 @@
 
 [中文](README.md) · [Quick start](#quick-start) · [Reproduction and acceptance](docs/reproducible-release.md)
 
-**Current stage: an interactive local research demo.** Six template families, independent mathematical verification, multi-turn data revisions and controlled recovery-policy experiments are implemented. General constraint compilation, real-business validation and LLM SFT/GRPO remain future work. The default demo needs no LLM API key.
+**Current stage: an interactive local research demo.** Six business template families, direct mathematical text/LaTeX LP/MILP solving, independent verification, multi-turn revisions and controlled recovery-policy experiments are implemented. Arbitrary natural-language constraint compilation, nonlinear models, real-business validation and LLM SFT/GRPO remain future work. The default demo needs no LLM API key.
+
+**Solve without uploading a table:** paste explicit variable domains, a max/min objective and one linear constraint per line, or load the mathematical model example on the welcome screen. Binary, integer, continuous and finite integer domains are supported. Unsupported expressions trigger clarification rather than being dropped. The [10-variable example](examples/linear_program_sample.md) has eight constraints and optimum 46. Recovery uses rules for this new model type because the old checkpoints only cover six business templates. This September 28 source update is not included in the frozen September 27 archive.
 
 OptiAgent is evolving into a two-track research platform. The first track learns an Agent policy for planning, MCP tool routing, solving, verification, and recovery. The second track will deploy an open-source language model in the cloud and post-train it with SFT and GRPO for optimization modeling, structured tool use, and verifier-guided repair. Solvers and deterministic verifiers provide the shared executable feedback loop.
 

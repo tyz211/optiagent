@@ -2,6 +2,10 @@
 
 This folder gives visitors a fast way to understand what OptiAgent can solve and how to phrase requests.
 
+## Mathematical Text / LaTeX
+
+Paste the complete model from [linear_program_sample.md](linear_program_sample.md) into the main conversation. No file upload or LLM key is required. The example has 10 variables, eight linear constraints and an independently enumerated optimum of 46.
+
 ## Facility Location
 
 Use the built-in CSV files in `../data`:

@@ -415,7 +415,11 @@ def _difference(left: float | None, right: float | None) -> float:
     return abs(left - right)
 
 
+from optiagent.linear_solver import verify_linear_decisions
+
+
 _VERIFIERS: dict[str, Callable[[dict[str, Any], SolveEnvelope, _VerificationState], None]] = {
+    "linear_program": verify_linear_decisions,
     "knapsack": _verify_knapsack,
     "assignment": _verify_assignment,
     "tsp": _verify_tsp,

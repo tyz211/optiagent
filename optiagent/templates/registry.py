@@ -21,6 +21,10 @@ class OptimizationTemplate:
 
     def score(self, question: str, data: SupplyChainData | None = None) -> float:
         lowered = question.lower()
+        if self.template_id == "linear_program":
+            # 数学模型有独立入口，不将多约束整数模型误判成单容量背包。
+            from optiagent.linear_model import looks_like_linear_model
+            return 0.95 if looks_like_linear_model(question) or '"variables"' in question and '"objective"' in question else 0.0
         keyword_hits = sum(1 for keyword in self.keywords if keyword.lower() in lowered)
         score = keyword_hits / max(len(self.keywords), 1)
         if self.template_id == "facility_location" and data is not None:
@@ -201,6 +205,20 @@ def _production_mix_spec(question: str, data: SupplyChainData | None, confidence
     )
 
 
+def _linear_program_spec(question: str, data: SupplyChainData | None, confidence: float) -> ProblemSpec:
+    """数学文本直接形成受限的可执行线性模型合同。"""
+    return ProblemSpec(
+        problem_type="LP/MILP", display_name="文本线性规划 / 整数规划",
+        objective="按照用户显式给出的线性目标最大化或最小化",
+        sets=["用户声明的变量"], parameters=["目标系数", "约束系数", "变量取值范围"],
+        decision_variables=["用户声明的连续、整数或二元变量"],
+        constraints=["逐条保留输入中的线性等式、不等式及变量域"],
+        recommended_solver="Gurobi", solver_reason="显式 LP/MILP 合同可直接构建线性模型并独立复算。",
+        data_requirements=[DataRequirement("model", ["variables", "objective", "constraints"], "可直接粘贴数学文本或 LaTeX，无需上传表格")],
+        output_schema=["目标值", "全部变量值", "逐条约束验算"], template_id="linear_program", confidence=confidence,
+    )
+
+
 TEMPLATES = [
     OptimizationTemplate(
         "facility_location",
@@ -244,4 +262,5 @@ TEMPLATES = [
         ["产品组合", "生产计划", "资源约束", "原料", "利润最大", "产量", "混合优化", "mixed", "milp"],
         _production_mix_spec,
     ),
+    OptimizationTemplate("linear_program", "文本线性规划 / 整数规划", "LP/MILP", [], _linear_program_spec),
 ]

@@ -41,6 +41,10 @@ def build_problem_envelope(
     spec = ProblemSpecModel.from_problem_spec(template.build_spec(question, None))
     spec.confidence = 1.0
     report = validate_problem_data(template_id, data)
+    if template_id == "linear_program" and report.valid:
+        # 向所有入口提供实际模型说明，便于用户核对没有遗漏任何条件。
+        from optiagent.linear_solver import describe_linear_model
+        spec.objective, spec.decision_variables, spec.constraints = describe_linear_model(data)
     report.warnings = [*(warnings or []), *report.warnings]
     if report.valid:
         spec.missing_data = []
