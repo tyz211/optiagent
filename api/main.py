@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from io import StringIO
 import json
 from pathlib import Path
+from typing import Literal
 from queue import Empty, Queue
 import time
 
@@ -43,6 +44,7 @@ from api.database import (
 )
 from api.services.agent_workflow import agent_graph_manifest, run_agent_workflow
 from api.services.repair_demo import router as repair_demo_router
+from api.services.agent_memory_api import router as agent_memory_router
 from optiagent.data import SupplyChainData, normalize_data, validate_data
 from optiagent.llm import DataProfile
 from optiagent.mcp_client import builtin_mcp_config
@@ -52,6 +54,7 @@ from optiagent.schema_mapping import assemble_facility_data, apply_table_mapping
 
 app = FastAPI(title="OptiAgent API")
 app.include_router(repair_demo_router)
+app.include_router(agent_memory_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -69,7 +72,8 @@ class LLMConfigIn(BaseModel):
     name: str = "default"
     base_url: str
     model: str
-    api_key: str
+    # 编辑已有配置可以省略密钥，服务端保留当前账户的已保存值。
+    api_key: str | None = None
     temperature: float = 0.2
 
 
@@ -78,6 +82,8 @@ class AskRequest(BaseModel):
     dataset_id: int | None = None
     conversation_id: int | None = None
     mcp_config: str = ""
+    # 未传模式时优先使用当前账户模型，显式 legacy 才跳过 LLM 主控。
+    agent_mode: Literal["auto", "llm", "legacy"] | None = None
 
 
 class LoginRequest(BaseModel):
@@ -444,13 +450,21 @@ def data_summary(
 @app.post("/api/llm-config")
 def configure_llm(config: LLMConfigIn, x_session_token: str | None = Header(default=None)):
     user = get_user_by_token(x_session_token)
-    config_id = save_llm_config(config.model_dump(), user_id=user["id"] if user else None)
+    # 失效登录态必须重新登录，避免将个人密钥意外写入匿名配置。
+    if x_session_token and not user:
+        raise HTTPException(status_code=401, detail="登录状态已失效，请重新登录后保存模型配置。")
+    try:
+        config_id = save_llm_config(config.model_dump(), user_id=user["id"] if user else None)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "config_id": config_id}
 
 
 @app.get("/api/llm-config")
 def get_llm_config(x_session_token: str | None = Header(default=None)):
     user = get_user_by_token(x_session_token)
+    if x_session_token and not user:
+        raise HTTPException(status_code=401, detail="登录状态已失效，请重新登录。")
     config = get_active_llm_config(user["id"] if user else None)
     if not config:
         return {"configured": False}
@@ -460,6 +474,8 @@ def get_llm_config(x_session_token: str | None = Header(default=None)):
         "base_url": config["base_url"],
         "model": config["model"],
         "temperature": config["temperature"],
+        # 仅回传保存状态，不把实际密钥重新发送到浏览器。
+        "has_api_key": bool(config["api_key"].strip()),
     }
 
 
@@ -478,6 +494,7 @@ def ask(request: AskRequest, x_session_token: str | None = Header(default=None))
         mcp_config=request.mcp_config,
         user_id=uid,
         conversation_id=conversation["id"],
+        agent_mode=request.agent_mode,
     )
 
 
@@ -504,6 +521,7 @@ def ask_stream(request: AskRequest, x_session_token: str | None = Header(default
                     user_id=uid,
                     conversation_id=conversation["id"],
                     event_callback=event_queue.put,
+                    agent_mode=request.agent_mode,
                 )
                 last_heartbeat = time.monotonic()
                 while not future.done() or not event_queue.empty():

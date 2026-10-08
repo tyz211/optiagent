@@ -12,6 +12,7 @@ from optiagent.templates.registry import get_template
 
 # 对话编辑只改变已经能被 Gateway 消费的字段，不把自然语言约束冒充可执行约束。
 ALIASES = {'knapsack': 'knapsack', 'assignment': 'assignment', 'tsp': 'tsp',
+           'transportation': 'transportation',
            'linear_program': 'linear_program',
            'job_shop': 'job_shop_scheduling', 'scheduling': 'job_shop_scheduling',
            'production': 'production_mix', 'production_mix': 'production_mix'}
@@ -22,9 +23,15 @@ SHAPES = {'knapsack': {'items', 'capacity'}, 'assignment': {'resources', 'tasks'
 
 def identify(payload: dict) -> tuple[str | None, dict]:
     """优先显式模板包装，再根据必需字段识别完整输入。"""
+    if 'transportation' in payload:
+        # 运输包装必须整体校验，不能因混入其他模板包装而绕过额外字段检查。
+        return 'transportation', payload['transportation']
     for alias, template in ALIASES.items():
         if isinstance(payload.get(alias), dict):
             return template, payload[alias]
+    # 部分运输字段也必须进入严格校验，不能因为缺字段退回宽松的需求摘要。
+    if {'suppliers', 'consumers'} & payload.keys():
+        return 'transportation', payload
     for template, keys in SHAPES.items():
         if keys <= payload.keys():
             return template, payload
@@ -39,7 +46,25 @@ def update_contract(question: str, previous: dict | None) -> dict | None:
     text = question.strip()
     payload = _extract_json_payload(text)
     template, data = identify(payload) if payload is not None else (None, {})
-    if payload is None:
+    evidence = []
+    # 模型草稿只有在专用确认命令后才成为有效版本；“继续求解”不能隐式确认。
+    confirmed_draft = bool(old.get('pending_transportation')) and text == '确认运输草稿并求解'
+    if confirmed_draft:
+        template, data = 'transportation', deepcopy(old['pending_transportation'])
+        payload = data
+        evidence = [{'text': quote, 'status': 'user_confirmed_llm_draft'} for quote in old.get('pending_source_quotes', [])]
+    from optiagent.transportation_text import looks_like_transportation, parse_transportation_request
+    is_new_transport = payload is None and looks_like_transportation(text) and (
+        not old or ('供给点' in text and '需求点' in text and not re.search(r'改成|改为|调整为', text)))
+    if not confirmed_draft and (template == 'transportation' or is_new_transport):
+        try:
+            data, evidence = parse_transportation_request(text)
+            template = 'transportation'
+        except ValueError as exc:
+            state = deepcopy(old)
+            state.update(action='clarify', changes=[], error=f'运输需求尚不能完整执行：{str(exc)[:1800]}')
+            return state
+    if payload is None and template is None:
         # 数学文本和 JSON 形成相同版本合同；解析失败不能覆盖已有有效输入。
         from optiagent.linear_model import parse_linear_text
         try:
@@ -52,6 +77,11 @@ def update_contract(question: str, previous: dict | None) -> dict | None:
             template, data = 'linear_program', parsed
     if not template and not old:
         return None
+    if not template and old and not old.get('data'):
+        # 缺数据或待确认草稿不能进入依赖旧有效输入的撤销、比较与编辑分支。
+        state = deepcopy(old)
+        state.update(action='clarify', changes=[])
+        return state
     state = deepcopy(old)
     state.update(action='solve', changes=[], error=None)
     hold_words = r'先不求解|暂不求解|只修改|先不算|先分析|只分析|不要求解'
@@ -100,6 +130,14 @@ def update_contract(question: str, previous: dict | None) -> dict | None:
         elif hold and not command.strip('，,。；; '):
             state['action'] = 'hold'
             return state
+        elif old['template_id'] == 'transportation':
+            from optiagent.transportation_text import edit_transportation
+            try:
+                candidate, evidence = edit_transportation(text, old['data'])
+                operation = 'edit_transportation'
+            except ValueError as exc:
+                state.update(action='clarify', changes=[], error=str(exc)[:1800])
+                return state
         else:
             state.update(action='clarify', error='这条修改尚不能可靠执行。可输入“把容量改成 6”（背包）、“撤销上次修改”、“比较最近两个方案”，或提交完整 JSON 替换数据；旧版本未修改。')
             return state
@@ -128,17 +166,25 @@ def update_contract(question: str, previous: dict | None) -> dict | None:
         parent = target.get('parent_revision')
     change = {'operation': operation, 'turn': int((previous or {}).get('turn_count', 0)) + 1,
               'before_revision': old.get('revision'), 'after_revision': revision}
+    if evidence:
+        # 来源随版本保存，便于检查每句话是否被执行或仅属于控制指令。
+        change['evidence'] = evidence
     if operation == 'replace_capacity':
         change.update(field='capacity', before=old['data']['capacity'], after=candidate['capacity'])
     versions.append({'revision': revision, 'parent_revision': parent, 'template_id': state['template_id'],
                      'data': deepcopy(candidate), 'change': change})
     state.update(data=candidate, revision=revision, versions=versions, changes=[change], action='hold' if hold else 'solve')
+    state.pop('pending_transportation', None)
+    state.pop('pending_source_quotes', None)
     return state
 
 
 def apply_contract(brief, state: dict):
     """用唯一有效输入构造求解请求，不将历史错误指令送入求解器。"""
     brief.dialogue_contract = state
+    attempt = state.get('parser_attempt', {})
+    if attempt.get('status') == 'awaiting_confirmation' and attempt.get('turn') == brief.turn_count:
+        brief.source = 'llm'
     if state.get('data'):
         template = get_template(state['template_id'])
         brief.template_id = state['template_id']
@@ -156,6 +202,12 @@ def apply_contract(brief, state: dict):
             brief.objective, _, brief.constraints = describe_linear_model(state['data'])
         if brief.template_id == 'knapsack':
             brief.constraints.append(f"当前容量上限：{float(state['data']['capacity']):g}")
+        if brief.template_id == 'transportation':
+            current = state['data']
+            brief.constraints = [f"{r['name']} 发货量不超过 {r['supply']:g} {current['quantity_unit']}" for r in current['suppliers']]
+            brief.constraints += [f"{r['name']} 收货量恰好为 {r['demand']:g} {current['quantity_unit']}" for r in current['consumers']]
+            brief.constraints += [f"禁止 {r['source']} 到 {r['target']} 运输" for r in current['forbidden_routes']]
+            brief.constraints.append('运输量为非负连续值')
         brief.data_sources = [f"会话内结构化数据 · 版本 {state['revision']}"]
         brief.known_facts = []
         brief.assumptions = []

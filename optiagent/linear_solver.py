@@ -50,7 +50,8 @@ def solve_linear_model(data: dict, data_source: str = "数学文本", warnings=N
     from optiagent.generic_solvers import GenericSolveResult
 
     problem = LinearModel.model_validate(data)
-    with gp.Model("explicit_linear_model") as model:
+    # 在环境启动前关闭输出，避免许可证横幅污染 MCP stdio 的 JSON-RPC 通道。
+    with gp.Env(params={"OutputFlag": 0}) as environment, gp.Model("explicit_linear_model", env=environment) as model:
         configure_gurobi_model(model)
         if time_limit is not None:
             model.Params.TimeLimit = time_limit

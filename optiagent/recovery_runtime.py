@@ -105,7 +105,7 @@ class RecoveryPolicyRuntime:
         decision.metadata.update({"observation": observation, "requested_policy": self.name})
         if self.agent is None:
             return decision
-        if observation['template_id'] == 'linear_program':
+        if observation['template_id'] in {'linear_program', 'transportation'}:
             # 旧检查点只训练过六种业务模板，新类型使用规则而不伪称已泛化。
             decision.metadata['fallback_reason'] = 'unsupported_template'
             return decision

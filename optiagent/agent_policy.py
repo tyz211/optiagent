@@ -49,14 +49,16 @@ def decide_after_verification(
     passed = bool(verification.get("passed"))
     mathematical = verification.get("mathematical") or {}
     mathematical_failed = bool(mathematical.get("verifiable")) and not bool(mathematical.get("passed"))
+    terminal_failure = bool(verification.get("terminal_failure"))
     # 重建模后仍需再求解，因此必须同时保留建模和求解预算。
     can_rebuild = (
         not passed
+        and not terminal_failure
         and mathematical_failed
         and model_attempt < max_model_attempts
         and solver_attempt < max_solver_attempts
     )
-    can_retry = not passed and solver_attempt < max_solver_attempts
+    can_retry = not passed and not terminal_failure and solver_attempt < max_solver_attempts
     can_terminate = not passed
 
     candidates = [
@@ -101,7 +103,8 @@ def decide_after_verification(
         reason = "未得到可接受的解，且仍有求解预算。"
     else:
         selected = "terminate"
-        reason = "恢复预算已用完，终止循环并保留失败样本。"
+        reason = ("已证明当前运输模型不可行，请修订供需或禁运条件后再求解。" if terminal_failure
+                  else "恢复预算已用完，终止循环并保留失败样本。")
 
     return PolicyDecision(
         selected_action=selected,

@@ -8,6 +8,7 @@ from api.services.uploaded_data_service import (
     has_executable_generic_upload,
 )
 from optiagent.llm import LLMConfig, call_openai_compatible_chat, clamp_probability, parse_json_object
+from optiagent.templates.registry import template_ids
 
 
 def build_agent_plan(
@@ -34,15 +35,7 @@ def build_agent_plan(
     prompt = {
         "question": question,
         "uploaded_files": file_summaries,
-        "available_problem_templates": [
-            "knapsack",
-            "assignment",
-            "tsp",
-            "job_shop_scheduling",
-            "production_mix",
-            "facility_location",
-            "file_answer",
-        ],
+        "available_problem_templates": [*template_ids(), "file_answer"],
         "available_tools": [
             "problem_spec_tool",
             "rag_context_pack_tool",
@@ -72,7 +65,7 @@ def build_agent_plan(
                         "工具计划必须要求求解器返回可证明最优解；如果工具只能给启发式可行解，必须在结果中标记未证明最优。"
                         "只输出 JSON，不要输出 Markdown。"
                         "JSON 字段：template_id, confidence, objective, selected_file, tool_chain, reasoning, needs_solver, data_gaps。"
-                        "template_id 只能是 knapsack、assignment、tsp、job_shop_scheduling、production_mix、facility_location、file_answer。"
+                        f"template_id 只能是 {'、'.join(template_ids())}、file_answer。"
                     ),
                 },
                 {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},

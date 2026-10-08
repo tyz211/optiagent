@@ -1,0 +1,15 @@
+{
+  "transportation": {
+    "quantity_unit": "吨",
+    "currency": "元",
+    "suppliers": [{"name": "A", "supply": 20}, {"name": "B", "supply": 30}],
+    "consumers": [{"name": "X", "demand": 10}, {"name": "Y", "demand": 30}],
+    "routes": [
+      {"source": "A", "target": "X", "cost": 2},
+      {"source": "A", "target": "Y", "cost": 5},
+      {"source": "B", "target": "X", "cost": 4},
+      {"source": "B", "target": "Y", "cost": 1}
+    ],
+    "forbidden_routes": []
+  }
+}

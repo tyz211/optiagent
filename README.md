@@ -14,7 +14,11 @@
 
 [English](README_EN.md) · [快速开始](#快速开始) · [复现与验收](docs/reproducible-release.md)
 
-**当前阶段：可交互的本地研究 Demo。** 已完成六类业务模板、直接数学文本/LaTeX 的 LP/MILP 求解、独立数学验算、多轮数据修订和恢复策略受控实验。任意自然语言约束编译、非线性模型、真实业务泛化验证和 LLM SFT/GRPO 尚未完成。默认演示无需 LLM API Key。
+**当前阶段：可交互的本地研究 Demo。** 已完成七类业务模板、直接数学文本/LaTeX 的 LP/MILP 求解、独立数学验算、多轮数据修订和恢复策略受控实验。2026-10-04 新增运输分配、受限中文解析及本地模型草稿接口；2026-10-07 补充运输不可行诊断，可报告供需短缺与网络连通性证据。真实小模型效果尚未实测。任意自然语言约束编译、非线性模型、真实业务泛化验证和 LLM SFT/GRPO 尚未完成。默认演示无需 LLM API Key。
+
+2026-10-05 新增 **LLM 主控、上下文预算、会话任务快照和显式长期记忆**。配置模型后主对话自动由 LLM 选择下一步行动，并读取工具反馈继续决策；无配置保留原有工作流。首版仍使用既有需求合同和模板建模，真实模型效果需独立验证。使用方式和边界见 [主控运行说明](docs/llm-agent-runtime.md)，后续步骤见 [实施计划](docs/llm-agent-implementation-plan.md)。
+
+2026-10-06 已接入 **带原文依据的数值修改与已验算方案解释**。主控可提出背包/运输修改，程序核对原文、数值、实体、单位和条件覆盖后原子保存；结果追问按用户、会话和有效版本读取方案，解释事实携带源运行与字段引用。可运行 `.venv/bin/python scripts/run_llm_agent_demo.py --followup` 查看三轮工具演示，主控响应为模拟；任意约束编译与真实模型任务效果仍待验证。
 
 该项目尝试把 **自然语言理解、结构化建模、RAG、工具路由、求解器执行、结果验证与策略学习** 串成一条完整闭环，让用户可以像和分析助手对话一样提出优化问题，并得到可审计、可解释、可执行的求解结果。
 
@@ -27,6 +31,8 @@ $$
 重点不只是让 LLM “生成一个模型”，而是学习一个可评估、可改进的 Agent policy，使系统能在澄清、检索、建模、工具选择、求解、验证和修复之间作出序列决策。完整定义见 [研究方向文档](docs/research-direction.md)。
 
 ## 当前 Demo 交付入口
+
+运输分配已接通主对话，支持明确的中文供需描述或内联 JSON、供需/运费修改、禁运、暂停与撤销。可直接复制 [运输分配示例](examples/transportation_sample.md)；模型草稿接口与开发评测说明也在该文档中。此新增能力不在 2026-09-27 冻结交付包内。
 
 **不用上传文件也能求解。** 在主对话中直接粘贴变量取值范围、`max/min` 目标和逐行线性约束，或点击「载入数学模型示例」。支持 `x_1` / `x_{1}` 下标、二元/整数/连续变量、有限整数集合、常数乘除和线性逻辑约束；解析不了的条件会明确追问，不会静默忽略。[完整示例与输入边界](examples/linear_program_sample.md)包含 10 个变量、8 条约束，最优目标为 46。旧恢复模型未训练过这一新类型，因此使用规则恢复。此能力是 2026-09-28 的源码更新，不在下述已经冻结的 2026-09-27 压缩包中。
 
@@ -105,7 +111,7 @@ $$
 
 ## 研究目标
 
-OptiAgent 的长期方向由两条相互闭环的主线组成：第一部分是当前正在开发的 Agent System，学习规划、MCP 工具路由、求解控制和失败恢复；第二部分是在云端部署开源语言模型，并使用 SFT + GRPO 后训练其运筹建模、结构化工具调用和反馈修复能力。Solver 与 Verifier 为两条主线提供统一、可执行且可复算的环境反馈。
+OptiAgent 的长期方向由两条相互闭环的主线组成：第一部分是当前正在开发的 Agent System，学习规划、MCP 工具路由、求解控制和失败恢复；第二部分以本地部署开源小模型为目标，先完善模板、结构化需求解析与评测，再按错误分布安排 SFT 和 GRPO。模型训练地点与本地推理部署解耦。Solver 与 Verifier 为两条主线提供统一、可执行且可复算的环境反馈，需求语义正确性另行评估。
 
 两部分的训练对象不同：当前 BC + Masked Double DQN 学习结构化状态上的高层 Agent 动作；未来 GRPO 学习的是开源语言模型的 token/结构化输出策略。项目早期将交替固定其中一侧进行训练，避免 Agent 与模型同时更新造成非平稳训练。
 
@@ -168,6 +174,7 @@ OptiAgent 的长期方向由两条相互闭环的主线组成：第一部分是�
 
 | 模板 | `template_id` | 数据入口 | 求解方式 | 结果状态 |
 | --- | --- | --- | --- | --- |
+| 单商品运输分配 | `transportation` | 受限中文、内联 JSON；Data MCP 可读 JSON 文件 | Gurobi LP + 独立业务验算 | `OPTIMAL`、`FEASIBLE` 或明确失败状态 |
 | 显式线性 / 整数规划 | `linear_program` | 数学文本、LaTeX 或规范模型 JSON，无需上传表格 | Gurobi LP/MILP + 独立验算 | `OPTIMAL`、`FEASIBLE` 或明确失败状态 |
 | 仓库选址与客户分配 | `facility_location` | 三个 CSV：`warehouses/customers/costs` | Gurobi MILP | `OPTIMAL`、`NEAR_OPTIMAL` 或 Gurobi 状态 |
 | 0-1 背包 | `knapsack` | JSON 或 CSV：`item/value/weight` | Gurobi IP | `OPTIMAL` 或 `NEAR_OPTIMAL` |
@@ -176,7 +183,7 @@ OptiAgent 的长期方向由两条相互闭环的主线组成：第一部分是�
 | 作业车间调度 | `job_shop_scheduling` | JSON 或 CSV：`job/machine/duration/order` | Gurobi MILP / 列表调度兜底 | `OPTIMAL`、`NEAR_OPTIMAL` 或 `FEASIBLE` |
 | 产品组合与生产计划 | `production_mix` | JSON 或 CSV：`product/profit/资源列 + capacities` | Gurobi LP/MILP | `OPTIMAL` 或 `NEAR_OPTIMAL` |
 
-说明：运输分配、VRP/VRPTW 等内容目前保留在 RAG 知识库中作为建模参考，还不是活跃自动求解模板。
+说明：运输分配首版支持供给上限、需求恰好满足与显式禁运；VRP/VRPTW 仍仅作为 RAG 建模参考，尚非可执行模板。
 
 ### 求解质量策略
 
@@ -329,18 +336,27 @@ api/
   main.py                  FastAPI 路由、上传、配置入口
   database.py              SQLite 持久化
   services/agent_workflow.py  LangGraph 条件状态图、恢复回路与运行事件
+  services/llm_controller.py  LLM 决策、预算、审计和终止处理
+  services/agent_tool_registry.py  Agent 工具定义与执行分派
+  services/agent_tool_catalog.py   内置工具注册与前置条件
+  services/agent_tools.py     本地工具处理函数与本轮执行上下文
+  services/agent_decision.py  共享行动合同与工具参数模型
   services/ask_service.py  提问编排、RAG、数据解析、工具调用响应
 
 optiagent/
   mcp_contracts.py         ProblemEnvelope / SolveEnvelope 版本化合同
   mcp_validation.py        Data / Solver MCP 共享的确定性数据校验
-  solution_verifier.py     六类模板的约束与目标值独立复算
+  solution_verifier.py     模板决策的约束与目标值独立复算
+  template_extensions.py   模板说明、能力、校验、求解和验算的统一注册入口
   mcp_client.py            内置与外部 MCP 发现、前缀和降级
   optimization_gateway.py  本地与 MCP 共用的唯一合同化求解入口
   mcp_servers/             Document / Data / Solver MCP 服务
   problem_spec.py          ProblemSpec 数据结构
-  templates/registry.py    问题模板与自动识别
-  solver_registry.py       通用求解器注册表
+  templates/registry.py    模板查询与自动识别的兼容入口
+  templates/definitions.py 内置模板元数据与 ProblemSpec 构造
+  templates/builtins.py    内置完整模板扩展的组装
+  templates/validators.py  各模板的数据校验实现
+  solver_registry.py       通用求解适配器查询的兼容入口
   generic_solvers.py       背包、指派、TSP、调度、产品组合求解器
   solver.py                仓库选址 Gurobi MILP
   rag.py                   本地 Markdown RAG 检索
@@ -360,6 +376,8 @@ data/
   tsp.csv
   china_city_reference.csv
 ```
+
+本地文件管理：`__pycache__/`、`.pytest_cache/` 和 `.DS_Store` 是可再生缓存，可清理；`.venv/` 是运行环境，`.idea/` 是本地 IDE 配置。`data/optiagent.sqlite3` 保存会话与配置，`artifacts/rl/` 保存训练数据、权重和实验记录，均应按实际用途保留。2026-09-27 交付版的原始 core/full 验收报告统一保存在 `artifacts/releases/demo-2026.09.27/validation/`，已清理 `artifacts/validation/` 下逐文件校验一致的同版副本；其他验收记录继续保留。忽略文件不等于无用文件。
 
 ## 数据示例
 
@@ -468,6 +486,8 @@ Beijing,Nanjing,4.2
 ```
 
 ## LLM 与 MCP 配置
+
+登录后保存模型配置，API Key 会按账户长期保存在项目数据库中。刷新或重新登录会恢复模型设置，并显示密钥已保存；编辑时密钥留空保留旧值，输入新值才替换。配置后主对话默认优先由 LLM 驱动整个 Agent 的行动规划，求解与验算仍由工具执行；需要旧工作流时可显式指定 `agent_mode=legacy`。
 
 页面中可填写 OpenAI-compatible Chat Completions 配置：
 
@@ -621,6 +641,7 @@ PYTHONPATH=. .venv/bin/python scripts/run_e2e_benchmark.py --output data/benchma
 
 ## Roadmap
 
+- 近期优先推进本地小模型部署、可执行模板扩展和结构化需求解析，实施顺序与验收标准见 [本地小模型 Agent 推进计划](docs/local-small-model-roadmap.md)。
 - 完善多轮需求 Agent：支持显式修改/删除约束、方案确认、what-if 分支和会话摘要压缩。
 - 建立对话 policy 评测集，测量澄清轮数、需求覆盖率、无效工具调用率与最终求解成功率。
 - 扩充已有 trajectory 数据集，采集真实用户需求变更和失败—修复记录。

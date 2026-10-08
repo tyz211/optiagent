@@ -2,6 +2,10 @@
 
 This folder gives visitors a fast way to understand what OptiAgent can solve and how to phrase requests.
 
+## Transportation
+
+See [运输分配完整示例与边界](transportation_sample.md) and [JSON data](transportation_sample.json). Paste the Chinese example or JSON into a new conversation to solve without an LLM. The known optimum is 50; changing supplier B's capacity to 20 changes it to 90. Local model drafts are separately confirmed and evaluated.
+
 ## Mathematical Text / LaTeX
 
 Paste the complete model from [linear_program_sample.md](linear_program_sample.md) into the main conversation. No file upload or LLM key is required. The example has 10 variables, eight linear constraints and an independently enumerated optimum of 46.

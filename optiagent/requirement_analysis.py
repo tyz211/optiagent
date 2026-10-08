@@ -7,7 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, ValidationError
 
 from optiagent.llm import LLMConfig, call_openai_compatible_chat, parse_json_object
-from optiagent.templates.registry import get_template, rank_templates
+from optiagent.templates.registry import get_template, rank_templates, template_ids
 
 
 RequirementIntent = Literal["explore", "analyze", "solve", "what_if"]
@@ -59,6 +59,13 @@ def analyze_requirements(
     from optiagent.dialogue_contract import update_contract, apply_contract
     contract = update_contract(question, previous_brief.model_dump() if previous_brief else None)
     if contract is not None:
+        # 只对首轮无法可靠解析的运输描述使用本地模型；已确认版本的修改仍受原子合同约束。
+        from optiagent.transportation_text import looks_like_transportation
+        if (contract.get('error') and not contract.get('data') and not contract.get('pending_transportation')
+                and llm_config and llm_config.enabled and looks_like_transportation(question)):
+            from optiagent.transportation_llm import add_transportation_draft
+            contract = add_transportation_draft(contract, question, llm_config)
+            contract['parser_attempt']['turn'] = local.turn_count
         return apply_contract(local, contract)
     if not llm_config or not llm_config.enabled or not _needs_llm_analysis(local, previous_brief):
         return local
@@ -192,8 +199,7 @@ def _llm_analysis(
                 "content": (
                     "你是运筹优化需求分析 Agent。请把多轮对话合并为一个结构化需求摘要，"
                     "区分用户已确认的信息、系统假设和仍需澄清的信息。不要求解，不要编造数据。"
-                    "template_id 只能是 facility_location、knapsack、assignment、tsp、"
-                    "job_shop_scheduling、production_mix 或 null。"
+                    f"template_id 只能是 {'、'.join(template_ids())} 或 null。"
                     "readiness 只能是 needs_clarification、ready_for_analysis、ready_to_solve；"
                     "只有目标、关键约束和求解数据都足够时才能使用 ready_to_solve。"
                     "只输出 JSON，不要输出 Markdown 或思维过程。字段必须包含："
@@ -219,14 +225,8 @@ def _guard_llm_analysis(
 ) -> RequirementBrief:
     """使用确定性条件约束 LLM readiness，避免在缺少数据时直接进入 Solver。"""
 
-    allowed_templates = {
-        "facility_location",
-        "knapsack",
-        "assignment",
-        "tsp",
-        "job_shop_scheduling",
-        "production_mix",
-    }
+    # 与模板注册表同步，避免新增模板只接上求解器却被需求分析丢弃。
+    allowed_templates = set(template_ids())
     if candidate.template_id not in allowed_templates:
         candidate.template_id = local.template_id
         candidate.problem_type = local.problem_type

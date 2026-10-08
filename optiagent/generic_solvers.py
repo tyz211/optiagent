@@ -9,7 +9,6 @@ from typing import Any
 import pandas as pd
 
 from optiagent.solver_config import configure_gurobi_model, get_solver_config, quality_status
-from optiagent.solver_registry import GenericSolverAdapter, register_generic_solver
 
 
 @dataclass(frozen=True)
@@ -823,60 +822,3 @@ def _gurobi_status_name(status_code: int) -> str:
         13: "SUBOPTIMAL",
     }
     return statuses.get(status_code, f"UNKNOWN_{status_code}")
-
-
-def _register_builtin_solvers() -> None:
-    # 使用独立适配器保留任意线性约束，避免套用业务模板而丢失数学条件。
-    from optiagent.linear_solver import extract_linear_data, solve_linear_model
-    register_generic_solver(GenericSolverAdapter(
-        template_id="linear_program", display_name="文本线性规划 / 整数规划",
-        solver_name="Gurobi LP/MILP", solve=solve_linear_model, extract_from_question=extract_linear_data,
-    ))
-    register_generic_solver(
-        GenericSolverAdapter(
-            template_id="knapsack",
-            display_name="0-1 背包选择问题",
-            solver_name="Gurobi",
-            solve=solve_knapsack,
-            extract_from_question=_extract_knapsack_data,
-        )
-    )
-    register_generic_solver(
-        GenericSolverAdapter(
-            template_id="tsp",
-            display_name="旅行商路径问题",
-            solver_name="OR-Tools Routing",
-            solve=solve_tsp,
-            extract_from_question=_extract_tsp_data,
-        )
-    )
-    register_generic_solver(
-        GenericSolverAdapter(
-            template_id="job_shop_scheduling",
-            display_name="作业车间调度问题",
-            solver_name="OR-Tools CP-SAT",
-            solve=solve_job_shop_scheduling,
-            extract_from_question=_extract_job_shop_data,
-        )
-    )
-    register_generic_solver(
-        GenericSolverAdapter(
-            template_id="production_mix",
-            display_name="产品组合与生产计划问题",
-            solver_name="Gurobi",
-            solve=solve_production_mix,
-            extract_from_question=_extract_production_mix_data,
-        )
-    )
-    register_generic_solver(
-        GenericSolverAdapter(
-            template_id="assignment",
-            display_name="指派匹配问题",
-            solver_name="Gurobi",
-            solve=solve_assignment,
-            extract_from_question=_extract_assignment_data,
-        )
-    )
-
-
-_register_builtin_solvers()

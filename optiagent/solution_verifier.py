@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 import math
-from typing import Any, Callable
+from typing import Any
 
 import pandas as pd
 
@@ -17,7 +17,7 @@ VERIFIABLE_STATUSES = {"OPTIMAL", "NEAR_OPTIMAL", "FEASIBLE"}
 
 
 @dataclass
-class _VerificationState:
+class VerificationState:
     """收集模板验证过程中的检查项和最大违反量。"""
 
     checks: dict[str, Any] = field(default_factory=dict)
@@ -53,7 +53,10 @@ def verify_solution(problem: ProblemEnvelope, solution: SolveEnvelope) -> Soluti
             warnings=[f"求解状态 {solution.status} 不包含可验证决策，跳过数学验算。"],
         )
 
-    verifier = _VERIFIERS.get(template_id)
+    # 验算实现独立于求解器，只由完整模板扩展指定回调。
+    from optiagent.template_extensions import get_template_extension
+    extension = get_template_extension(template_id)
+    verifier = extension.verify_decisions if extension else None
     if verifier is None:
         return SolutionVerificationReport(
             template_id=template_id,
@@ -61,7 +64,7 @@ def verify_solution(problem: ProblemEnvelope, solution: SolveEnvelope) -> Soluti
             warnings=[f"模板 {template_id} 尚未注册 SolutionVerifier。"],
         )
 
-    state = _VerificationState()
+    state = VerificationState()
     try:
         verifier(problem.data, solution, state)
     except Exception as exc:
@@ -98,7 +101,7 @@ def verify_solution(problem: ProblemEnvelope, solution: SolveEnvelope) -> Soluti
     )
 
 
-def _verify_knapsack(data: dict[str, Any], solution: SolveEnvelope, state: _VerificationState) -> None:
+def _verify_knapsack(data: dict[str, Any], solution: SolveEnvelope, state: VerificationState) -> None:
     items = {str(row["item"]): row for row in data.get("items", [])}
     decisions = solution.decisions
     decision_names = [str(row.get("item")) for row in decisions]
@@ -128,7 +131,7 @@ def _verify_knapsack(data: dict[str, Any], solution: SolveEnvelope, state: _Veri
     state.recomputed_objective = selected_value
 
 
-def _verify_assignment(data: dict[str, Any], solution: SolveEnvelope, state: _VerificationState) -> None:
+def _verify_assignment(data: dict[str, Any], solution: SolveEnvelope, state: VerificationState) -> None:
     resources = {str(item) for item in data.get("resources", [])}
     tasks = {str(item) for item in data.get("tasks", [])}
     cost_map = {
@@ -145,7 +148,7 @@ def _verify_assignment(data: dict[str, Any], solution: SolveEnvelope, state: _Ve
     state.recomputed_objective = sum(cost_map.get(pair, 0.0) for pair in pairs)
 
 
-def _verify_tsp(data: dict[str, Any], solution: SolveEnvelope, state: _VerificationState) -> None:
+def _verify_tsp(data: dict[str, Any], solution: SolveEnvelope, state: VerificationState) -> None:
     nodes, costs = _tsp_nodes_and_costs(data)
     route = [str(item) for item in (solution.metrics or {}).get("route", [])]
     if not route:
@@ -163,7 +166,7 @@ def _verify_tsp(data: dict[str, Any], solution: SolveEnvelope, state: _Verificat
     state.recomputed_objective = sum(costs.get((source, target), 0.0) for source, target in zip(route, route[1:], strict=False))
 
 
-def _verify_job_shop(data: dict[str, Any], solution: SolveEnvelope, state: _VerificationState) -> None:
+def _verify_job_shop(data: dict[str, Any], solution: SolveEnvelope, state: VerificationState) -> None:
     operations = _job_shop_operations(data)
     decisions: dict[tuple[str, int], dict[str, Any]] = {}
     duplicate = False
@@ -220,7 +223,7 @@ def _verify_job_shop(data: dict[str, Any], solution: SolveEnvelope, state: _Veri
     state.recomputed_objective = max((value for value in ends if value is not None), default=0.0)
 
 
-def _verify_production_mix(data: dict[str, Any], solution: SolveEnvelope, state: _VerificationState) -> None:
+def _verify_production_mix(data: dict[str, Any], solution: SolveEnvelope, state: VerificationState) -> None:
     products = {str(row["product"]): row for row in data.get("products", [])}
     capacities = data.get("capacities", {})
     if isinstance(capacities, list):
@@ -269,7 +272,7 @@ def _verify_production_mix(data: dict[str, Any], solution: SolveEnvelope, state:
     state.recomputed_objective = sum(float(products[product]["profit"]) * quantity for product, quantity in quantities.items() if product in products)
 
 
-def _verify_facility_location(data: dict[str, Any], solution: SolveEnvelope, state: _VerificationState) -> None:
+def _verify_facility_location(data: dict[str, Any], solution: SolveEnvelope, state: VerificationState) -> None:
     normalized = normalize_data(
         SupplyChainData(
             warehouses=pd.DataFrame(data.get("warehouses", [])),
@@ -413,17 +416,3 @@ def _difference(left: float | None, right: float | None) -> float:
     if left is None or right is None:
         return 0.0
     return abs(left - right)
-
-
-from optiagent.linear_solver import verify_linear_decisions
-
-
-_VERIFIERS: dict[str, Callable[[dict[str, Any], SolveEnvelope, _VerificationState], None]] = {
-    "linear_program": verify_linear_decisions,
-    "knapsack": _verify_knapsack,
-    "assignment": _verify_assignment,
-    "tsp": _verify_tsp,
-    "job_shop_scheduling": _verify_job_shop,
-    "production_mix": _verify_production_mix,
-    "facility_location": _verify_facility_location,
-}

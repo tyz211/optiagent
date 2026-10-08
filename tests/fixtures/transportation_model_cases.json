@@ -1,0 +1,10 @@
+[
+  {"id":"local-01","question":"请做运输分配，最小化总运费。A工厂最多供应20吨，客户X需要10吨，A到X每吨运费2元。单商品，没有其他限制，运输量可连续取值。","expected":"draft","data":{"suppliers":[{"name":"A","supply":20}],"consumers":[{"name":"X","demand":10}],"routes":[{"source":"A","target":"X","cost":2}],"forbidden_routes":[],"quantity_unit":"吨","currency":"元"}},
+  {"id":"local-02","question":"运输分配：A、B两个工厂分别最多供20吨、30吨，X、Y分别需要10吨、30吨。单位运费（元/吨）A-X是2、A-Y是5、B-X是4、B-Y是1。只运一种货，允许连续运输量，求总运费最低。","expected":"draft","data_file":"examples/transportation_sample.json"},
+  {"id":"local-03","question":"求解运输分配：A最多供10吨，B最多供10吨，X需要10吨。禁止A运给X，B到X每吨3元。单商品连续运输量，要求总运费最低。","expected":"draft","data":{"suppliers":[{"name":"A","supply":10},{"name":"B","supply":10}],"consumers":[{"name":"X","demand":10}],"routes":[{"source":"B","target":"X","cost":3}],"forbidden_routes":[{"source":"A","target":"X"}],"quantity_unit":"吨","currency":"元"}},
+  {"id":"local-04","question":"运输分配：A供给20吨，X需求10吨，帮我最小化运费，但A到X的运费还没确定。","expected":"missing"},
+  {"id":"local-05","question":"运输分配：A供给20，X需求10，A到X运费2。数量和费用的单位还没确定，请先不要猜。","expected":"missing"},
+  {"id":"local-06","question":"运输分配：A供20吨、X需求10吨，每吨2元，最小化运输总成本，并要求只用两辆车。","expected":"unsupported"},
+  {"id":"local-07","question":"运输分配：A供20吨、X需求10吨，每吨2元，最小化总成本，运输量必须为整数。","expected":"unsupported"},
+  {"id":"local-08","question":"运输分配：A供20吨、X需求10吨，每吨2元，最小化总成本，A到X线路最多只能运5吨。","expected":"unsupported"}
+]

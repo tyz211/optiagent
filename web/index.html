@@ -85,7 +85,7 @@
         <section id="llmPanel" class="config-drawer hidden">
           <div class="drawer-head">
             <h2>模型选择</h2>
-            <span>保存在当前登录用户下，下次自动读取</span>
+            <span>按账户长期保存，配置后优先由 LLM 驱动 Agent</span>
           </div>
           <div class="llm-grid">
             <select id="providerSelect">
@@ -99,6 +99,7 @@
             <input id="temperatureInput" placeholder="Temperature" value="0.2" />
           </div>
           <button id="saveLlmBtn" class="primary">保存配置</button>
+          <p id="llmConfigStatus" class="drawer-note" role="status" aria-live="polite"></p>
         </section>
 
         <section id="mcpPanel" class="config-drawer hidden">
@@ -143,6 +144,6 @@
         </section>
       </section>
     </main>
-    <script src="/static/app.js?v=20260928-linear-model-1"></script>
+    <script src="/static/app.js?v=20261007-persistent-llm-config-1"></script>
   </body>
 </html>

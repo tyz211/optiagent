@@ -29,31 +29,32 @@ class GenericSolverAdapter:
     extract_from_question: DataExtractorFn
 
 
-_GENERIC_SOLVERS: dict[str, GenericSolverAdapter] = {}
-
-
-def _ensure_builtin_solvers_loaded() -> None:
-    if _GENERIC_SOLVERS:
-        return
-    import optiagent.generic_solvers  # noqa: F401
-
-
 def register_generic_solver(adapter: GenericSolverAdapter) -> None:
-    _GENERIC_SOLVERS[adapter.template_id] = adapter
+    """兼容旧接口：仅显式替换已注册模板的通用求解适配器。"""
+    from dataclasses import replace
+    from optiagent.template_extensions import get_template_extension, register_template_extension
+    extension = get_template_extension(adapter.template_id)
+    if extension is None:
+        raise ValueError("新模板必须通过 register_template_extension 同时注册校验和验算")
+    register_template_extension(replace(extension, generic_solver=adapter, envelope_solver=None), replace=True)
 
 
 def get_generic_solver(template_id: str) -> GenericSolverAdapter | None:
-    _ensure_builtin_solvers_loaded()
-    return _GENERIC_SOLVERS.get(template_id)
+    """从统一扩展读取适配器，不依赖导入模块的副作用。"""
+    from optiagent.template_extensions import get_template_extension
+    extension = get_template_extension(template_id)
+    return extension.generic_solver if extension else None
 
 
 def list_generic_solvers() -> list[GenericSolverAdapter]:
-    _ensure_builtin_solvers_loaded()
-    return list(_GENERIC_SOLVERS.values())
+    """返回所有通用适配器，仓库选址使用专有合同适配器。"""
+    from optiagent.template_extensions import list_template_extensions
+    return [extension.generic_solver for extension in list_template_extensions()
+            if extension.generic_solver is not None]
 
 
 def solve_with_registered_solver(question: str, spec: ProblemSpec):
-    _ensure_builtin_solvers_loaded()
+    """保留旧的文本提取调用接口。"""
     adapter = get_generic_solver(spec.template_id)
     if adapter is None:
         return None

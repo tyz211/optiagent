@@ -69,22 +69,34 @@ def clamp_probability(value: Any, *, default: float = 0.0) -> float:
     return max(0.0, min(number, 1.0))
 
 
-def call_openai_compatible_chat(config: LLMConfig, messages: list[dict[str, str]]) -> str:
+def call_openai_compatible_chat(
+    config: LLMConfig, messages: list[dict[str, str]], *,
+    json_schema: dict[str, Any] | None = None, timeout: float = 20,
+    max_tokens: int | None = None,
+    strict_schema: bool = False,
+) -> str:
+    """兼容旧聊天调用；结构化任务显式提交 Schema 和生成预算，不静默降级。"""
     endpoint = config.base_url.rstrip("/")
     if not endpoint.endswith("/chat/completions"):
         endpoint = f"{endpoint}/chat/completions"
+    body: dict[str, Any] = {"model": config.model, "messages": messages, "temperature": config.temperature}
+    if json_schema is not None:
+        body["response_format"] = {"type": "json_schema", "json_schema": {
+            "name": "optiagent_requirement", "schema": json_schema,
+        }}
+        if strict_schema:
+            # 主控行动使用封闭 Schema；旧模型草稿接口保持原有兼容行为。
+            body["response_format"]["json_schema"]["strict"] = True
+    if max_tokens is not None:
+        body["max_tokens"] = max_tokens
     response = requests.post(
         endpoint,
         headers={
             "Authorization": f"Bearer {config.api_key}",
             "Content-Type": "application/json",
         },
-        json={
-            "model": config.model,
-            "messages": messages,
-            "temperature": config.temperature,
-        },
-        timeout=20,
+        json=body,
+        timeout=timeout,
     )
     response.raise_for_status()
     payload = response.json()

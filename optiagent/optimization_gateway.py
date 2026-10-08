@@ -21,6 +21,7 @@ from optiagent.solver import SolveResult, solve_facility_location
 from optiagent.solver_registry import get_generic_solver
 from optiagent.solution_verifier import verify_solution
 from optiagent.templates.registry import get_template
+from optiagent.template_extensions import get_template_extension
 
 
 IN_PROCESS_MCP_STATUS = "已通过 MCP Gateway（进程内传输）执行。"
@@ -84,9 +85,10 @@ def solve_problem_envelope(problem: ProblemEnvelope, time_limit: int | None = No
         ))
 
     try:
-        if template_id == "facility_location":
-            return _attach_solution_verification(problem, _solve_facility_envelope(problem, report, time_limit))
-        adapter = get_generic_solver(template_id)
+        extension = get_template_extension(template_id)
+        if extension is not None and extension.envelope_solver is not None:
+            return _attach_solution_verification(problem, extension.envelope_solver(problem, report, time_limit))
+        adapter = extension.generic_solver if extension else None
         if adapter is None:
             return _attach_solution_verification(problem, SolveEnvelope(
                 template_id=template_id,

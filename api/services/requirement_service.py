@@ -20,6 +20,7 @@ def analyze_requirement_turn(
     requested_dataset_id: int | None,
     user_id: int | None,
     conversation_id: int | None,
+    use_llm: bool = True,
 ) -> RequirementBrief:
     """读取会话记忆、分析本轮补充，并保存新的需求状态。"""
 
@@ -30,7 +31,8 @@ def analyze_requirement_turn(
     files = list_uploaded_files(limit=30, user_id=user_id, conversation_id=conversation_id)
     previous = get_conversation_requirement(conversation_id, user_id=user_id)
     history = list_runs(limit=100, user_id=user_id, conversation_id=conversation_id)[-6:]
-    llm_config = llm_config_from_record(get_active_llm_config(user_id))
+    # 主控模式统一管理模型上下文；已有分析工具先执行确定性需求合同。
+    llm_config = llm_config_from_record(get_active_llm_config(user_id)) if use_llm else None
     brief = analyze_requirements(
         question,
         previous=previous,

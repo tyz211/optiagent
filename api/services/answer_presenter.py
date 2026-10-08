@@ -125,6 +125,14 @@ def generic_answer_text(generic_result, problem_spec, rag_notes: list[str]) -> s
     """按通用优化模板生成用户可读的答案摘要。"""
 
     evidence = "；".join(rag_notes[:2]) if rag_notes else "已检索本地运筹优化知识库。"
+    if generic_result.template_id == "transportation":
+        # 不可行、超时和验算失败均保留真实状态，不能统一描述成成功求解。
+        verified = generic_result.solution_verification.get('passed', False)
+        return "\n".join([
+            generic_result.summary,
+            "供给上限、需求满足、运输线路与成本已独立验算通过。" if verified else "当前没有通过完整验算的运输方案。",
+            f"求解状态：{generic_result.status}。",
+        ])
     if generic_result.template_id == "linear_program":
         # 直接数学输入不需要上传表格，失败状态也不包装成已经成功求解。
         values = "，".join(f"{row['variable']}={row['value']:g}" for row in generic_result.decisions)
@@ -191,6 +199,7 @@ def rag_summary_for_generic(question: str, template_id: str):
 
     notes, docs = rag_summary(question, top_k=5)
     keyword_map = {
+        "transportation": ["运输", "供给", "需求"],
         "knapsack": ["背包", "0-1"],
         "assignment": ["指派", "匹配"],
         "tsp": ["旅行商", "路径", "TSP", "Routing"],
@@ -471,6 +480,9 @@ def _generic_extra_metrics(generic_result) -> list[dict[str, object]]:
 
     metrics = generic_result.metrics or {}
     quality = _quality_extra_metrics(generic_result.status, metrics)
+    if generic_result.template_id == "transportation":
+        return [{"label": "总供给", "value": metrics.get("total_supply"), "suffix": metrics.get("quantity_unit", "")},
+                {"label": "总需求", "value": metrics.get("total_demand"), "suffix": metrics.get("quantity_unit", "")}, *quality]
     if generic_result.template_id == "linear_program":
         return [{"label": "变量数", "value": metrics.get("variable_count")},
                 {"label": "约束数", "value": metrics.get("constraint_count")}, *quality]

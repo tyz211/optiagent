@@ -12,7 +12,7 @@ from optiagent.mcp_contracts import (
 from optiagent.mcp_servers.common import run_server
 from optiagent.optimization_gateway import solve_problem_envelope, validate_problem_envelope
 from optiagent.solution_verifier import verify_solution
-from optiagent.solver_registry import list_generic_solvers
+from optiagent.template_extensions import list_template_extensions
 
 
 mcp = FastMCP(
@@ -29,45 +29,20 @@ mcp = FastMCP(
 def solver_list_capabilities() -> list[SolverCapability]:
     """列出当前 Solver MCP 已注册的模板、求解器与输入字段。"""
 
-    capabilities = [
+    # 展示和求解读取同一份完整扩展，不再维护仓库选址特例或字段映射。
+    return [
         SolverCapability(
-            template_id="facility_location",
-            display_name="仓库选址与客户分配",
-            solver_name="Gurobi MILP",
-            exact=True,
-            input_keys=["warehouses", "customers", "costs"],
-            notes=["需要可用的 Gurobi 许可证。"],
+            template_id=extension.template.template_id,
+            display_name=extension.template.display_name,
+            solver_name=extension.solver_name,
+            exact=extension.capability.exact,
+            input_keys=list(extension.capability.input_keys),
+            notes=["实际最优性以返回的 status 和 optimality_proven 为准。",
+                   "支持：" + "、".join(extension.capability.supported),
+                   "暂不支持：" + "、".join(extension.capability.unsupported)],
         )
+        for extension in list_template_extensions()
     ]
-    input_keys = {
-        "linear_program": ["variables", "objective", "constraints"],
-        "knapsack": ["items", "capacity"],
-        "assignment": ["resources", "tasks", "costs"],
-        "tsp": ["distances 或 distance_matrix"],
-        "job_shop_scheduling": ["tasks"],
-        "production_mix": ["products", "capacities"],
-    }
-    exact = {
-        "linear_program": True,
-        "knapsack": True,
-        "assignment": True,
-        "tsp": False,
-        "job_shop_scheduling": False,
-        "production_mix": True,
-    }
-    for adapter in list_generic_solvers():
-        capabilities.append(
-            SolverCapability(
-                template_id=adapter.template_id,
-                display_name=adapter.display_name,
-                solver_name=adapter.solver_name,
-                exact=exact.get(adapter.template_id, False),
-                input_keys=input_keys.get(adapter.template_id, []),
-                notes=["实际最优性以返回的 status 和 optimality_proven 为准。"],
-            )
-        )
-    return capabilities
-
 
 @mcp.tool(title="校验求解请求")
 def solver_validate_problem(problem: ProblemEnvelope) -> ValidationReport:

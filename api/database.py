@@ -6,6 +6,7 @@ import json
 import sqlite3
 import secrets
 from typing import Iterator
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import pandas as pd
@@ -13,7 +14,8 @@ import pandas as pd
 from optiagent.data import SupplyChainData, normalize_data
 
 
-DB_PATH = Path("data/optiagent.sqlite3")
+# 数据库位置固定在项目目录，重启或更换启动目录不会切换用户与模型配置。
+DB_PATH = Path(__file__).resolve().parents[1] / "data" / "optiagent.sqlite3"
 
 
 @contextmanager
@@ -175,6 +177,25 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(conversation_id) REFERENCES conversations(id)
             );
+
+            -- 主控任务状态按会话持久化，长期记忆仅由用户明确录入。
+            CREATE TABLE IF NOT EXISTS agent_task_states (
+                conversation_id INTEGER PRIMARY KEY,
+                user_id INTEGER,
+                state_json TEXT NOT NULL DEFAULT '{}',
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS agent_memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                conversation_id INTEGER,
+                kind TEXT NOT NULL,
+                content TEXT NOT NULL,
+                source TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_agent_memories_scope
+            ON agent_memories(user_id, conversation_id);
 
             CREATE INDEX IF NOT EXISTS idx_agent_episodes_scope
             ON agent_episodes(user_id, conversation_id, started_at);
@@ -384,6 +405,41 @@ def save_conversation_requirement(
         )
 
 
+def compare_and_save_requirement(conversation_id: int, *, user_id: int | None,
+                                 expected: dict, replacement: dict) -> None:
+    """在同一事务中比较完整旧状态并提交，防止相同版本号下的更新被覆盖。"""
+
+    if get_conversation(conversation_id, user_id=user_id) is None:
+        raise PermissionError("会话不属于当前用户")
+    with connect() as conn:
+        # 写锁覆盖读取和更新；冲突时不保存任何候选数据或版本。
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT state_json FROM conversation_requirements WHERE conversation_id = ? AND user_id IS ?",
+            (conversation_id, user_id),
+        ).fetchone()
+        if row is None or _json_load(row["state_json"]) != expected:
+            raise ValueError("需求状态已变化，请重新读取有效版本")
+        conn.execute(
+            "UPDATE conversation_requirements SET state_json = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE conversation_id = ? AND user_id IS ?",
+            (_json_dump(replacement), conversation_id, user_id),
+        )
+
+
+def get_scoped_run(run_id: int, *, user_id: int | None, conversation_id: int) -> dict | None:
+    """按运行、用户和会话三重作用域读取，不能跨会话借用历史方案。"""
+
+    if get_conversation(conversation_id, user_id=user_id) is None:
+        return None
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM runs WHERE id = ? AND user_id IS ? AND conversation_id = ?",
+            (run_id, user_id, conversation_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def save_dataset(
     name: str,
     data: SupplyChainData,
@@ -507,12 +563,30 @@ def get_user_by_token(token: str | None) -> dict | None:
 
 
 def save_llm_config(config: dict, user_id: int | None = None) -> int:
+    """按账户持久化配置；空密钥保留原值，校验失败不覆盖有效配置。"""
+
     init_db()
+    base_url = str(config.get("base_url") or "").strip().rstrip("/")
+    model = str(config.get("model") or "").strip()
+    if not base_url or not model:
+        raise ValueError("请填写模型服务地址和模型名称。")
     with connect() as conn:
-        if user_id is None:
-            conn.execute("UPDATE llm_configs SET is_active = 0 WHERE user_id IS NULL")
-        else:
-            conn.execute("UPDATE llm_configs SET is_active = 0 WHERE user_id = ?", (user_id,))
+        # 同一事务读取旧密钥并切换配置，避免空表单或并发保存造成凭据丢失。
+        conn.execute("BEGIN IMMEDIATE")
+        previous = conn.execute(
+            "SELECT * FROM llm_configs WHERE is_active = 1 AND user_id IS ? ORDER BY id DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        api_key = str(config.get("api_key") or "").strip()
+        if not api_key and previous and previous["api_key"].strip():
+            if previous["base_url"].strip().rstrip("/") != base_url:
+                raise ValueError("更换模型服务地址时，请填写该服务的 API Key。")
+            api_key = previous["api_key"]
+        # 本机兼容服务允许无需密钥；远程服务首次保存必须提供密钥。
+        if not api_key and urlparse(base_url).hostname not in {"localhost", "127.0.0.1", "::1"}:
+            raise ValueError("首次配置该模型服务时，请填写 API Key。")
+        temperature = float(config.get("temperature", 0.2))
+        conn.execute("UPDATE llm_configs SET is_active = 0 WHERE user_id IS ?", (user_id,))
         cursor = conn.execute(
             """
             INSERT INTO llm_configs (user_id, name, base_url, model, api_key, temperature, is_active)
@@ -521,10 +595,10 @@ def save_llm_config(config: dict, user_id: int | None = None) -> int:
             (
                 user_id,
                 config.get("name") or "default",
-                config["base_url"],
-                config["model"],
-                config["api_key"],
-                float(config.get("temperature", 0.2)),
+                base_url,
+                model,
+                api_key,
+                temperature,
             ),
         )
         return int(cursor.lastrowid)
@@ -926,6 +1000,7 @@ def clear_runs(user_id: int | None = None, conversation_id: int | None = None) -
         clause, params = _scope_clause(user_id, conversation_id)
         _delete_agent_episodes(conn, clause, params)
         conn.execute(f"DELETE FROM conversation_requirements WHERE {clause}", params)
+        conn.execute(f"DELETE FROM agent_task_states WHERE {clause}", params)
         cursor = conn.execute(f"DELETE FROM runs WHERE {clause}", params)
         return int(cursor.rowcount or 0)
 
@@ -949,6 +1024,8 @@ def delete_conversation(conversation_id: int, user_id: int | None = None) -> boo
         clause, params = _scope_clause(user_id, conversation_id)
         _delete_agent_episodes(conn, clause, params)
         conn.execute(f"DELETE FROM conversation_requirements WHERE {clause}", params)
+        conn.execute(f"DELETE FROM agent_task_states WHERE {clause}", params)
+        conn.execute(f"DELETE FROM agent_memories WHERE {clause}", params)
         conn.execute(f"DELETE FROM runs WHERE {clause}", params)
         conn.execute(f"DELETE FROM uploaded_files WHERE {clause}", params)
         if user_id is None:

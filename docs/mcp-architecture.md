@@ -42,6 +42,29 @@ LangGraph 状态图和实时事件协议见 [Agent 工作流文档](agent-workfl
 
 上述入口都使用 `ProblemEnvelope -> ValidationReport -> SolveEnvelope` 链路。本地请求使用进程内传输，避免为每次 Web 请求创建子进程；LLM 和外部客户继续使用 stdio 或 Streamable HTTP。两种传输共用相同 Gateway 实现。
 
+## 模板扩展注册
+
+2026-10-07 起，`optiagent/template_extensions.py` 是模板运行时的唯一注册入口。一个 `TemplateExtension` 同时包含：
+
+| 字段 | 职责 |
+| --- | --- |
+| `template` | `OptimizationTemplate` 元数据、识别关键词与 `ProblemSpec` 构造函数 |
+| `capability` | 输入字段、精确求解能力与支持/不支持的约束 |
+| `validate_data` | 从原始数据返回 `ValidationReport` |
+| `verify_decisions` | 根据原始数据与决策独立复算，通过 `VerificationState.check` 记录约束，并设置 `recomputed_objective` |
+| `generic_solver` | `GenericSolverAdapter`，提供文本数据提取与通用求解结果 |
+| `envelope_solver` | 专有合同适配器，接收问题、校验报告和时间限制，直接返回 `SolveEnvelope` |
+
+两种求解适配器必须且只能选择一个；使用专有合同适配器时还须填写 `envelope_solver_name`。仓库选址沿用专有合同适配器，Gateway 不再维护模板标识分支。两种适配器的返回结果都接受相同的独立验算。
+
+新增模板时，在应用启动阶段构造完整扩展并调用 `register_template_extension(extension)`。此后模板查询、数据校验、Gateway 求解、独立验算和 Solver MCP 能力发现都会读取该注册记录，无需分别改动这些入口。内置组装集中在 `templates/builtins.py`；求解模块导入不再产生自行注册的副作用。内置加载以独立完成标记判断并一次性发布，先注册外部扩展也不会遗漏内置模板。
+
+不完整、重复或适配器标识不一致的注册会被拒绝。确需替换完整实现时显式传 `replace=True`；旧 `register_generic_solver` 仅兼容替换已存在模板的适配器，新模板必须完整注册。
+
+注册表是进程内状态，Web 与独立 MCP 进程的入口应分别导入并注册同一个扩展模块。当前没有自动扫描目录、持久化插件或远程热加载机制。新增模板进入上述合同执行链后，自然语言语义解析、上传字段映射、可编辑需求和专用结果展示仍需按业务实现，注册本身不会生成这些能力。
+
+扩展接入示例与拒绝边界见 `tests/test_extension_registry.py`，其中新增单变量模板通过真实 Gateway 求解，并验证伪造目标值、越界决策和非法输入被拒绝。
+
 ## 统一合同
 
 `ProblemEnvelope` 是三类 MCP 之间的唯一公共问题格式：

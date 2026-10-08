@@ -34,6 +34,8 @@ const state = {
   conversations: [],
   conversationSearch: "",
   asking: false,
+  // 只记住公开配置的版本，密钥始终留在服务端，不写入浏览器存储。
+  llmConfigSignature: null,
 };
 
 const fmt = (value) => {
@@ -143,6 +145,7 @@ async function loadAll() {
     api("/api/conversations"),
   ]);
   setText("userState", me.logged_in ? `已登录：${me.user.username}` : "未登录");
+  restoreLlmConfig(llm, me.user?.id ?? null);
   await ensureActiveConversation(conversationPayload.conversations || []);
   const cid = state.activeConversationId;
   const query = cid ? `?conversation_id=${encodeURIComponent(cid)}` : "";
@@ -164,7 +167,39 @@ async function loadAll() {
   renderUploadedFiles(datasets.uploaded_files || []);
   renderDatasetHeader(summary);
   renderConversationMessages(runs.runs || []);
-  setText("llmState", llm.configured ? llm.model : "未配置");
+}
+
+function restoreLlmConfig(config, userId) {
+  // 同一账户配置未变化时保留未提交的编辑；刷新和切换账户时恢复服务端设置。
+  const signature = JSON.stringify([userId, config]);
+  if (state.llmConfigSignature === signature) {
+    return;
+  }
+  state.llmConfigSignature = signature;
+  const providerName = config.configured && providers[config.name] ? config.name : "custom";
+  byId("providerSelect").value = config.configured ? providerName : "openai";
+  updateModelOptions();
+  if (config.configured) {
+    const modelSelect = byId("modelSelect");
+    if (!Array.from(modelSelect.options).some((option) => option.value === config.model)) {
+      const option = document.createElement("option");
+      option.value = config.model;
+      option.textContent = config.model;
+      modelSelect.appendChild(option);
+    }
+    modelSelect.value = config.model;
+    byId("baseUrlInput").value = config.base_url;
+    byId("temperatureInput").value = config.temperature;
+  } else {
+    byId("temperatureInput").value = "0.2";
+  }
+  // 不回显密钥；空框表示保留已保存值，并非配置丢失。
+  byId("apiKeyInput").value = "";
+  byId("apiKeyInput").placeholder = config.has_api_key ? "API Key 已保存，留空保留原密钥" : "API Key";
+  setText("llmState", config.configured ? `${config.model} · LLM 主控` : "未配置");
+  setText("llmConfigStatus", config.configured
+    ? `${config.has_api_key ? "API Key 已保存" : "模型配置已保存"}，默认由 LLM 规划并驱动 Agent。`
+    : "尚未保存模型配置。");
 }
 
 async function ensureActiveConversation(conversations) {
@@ -624,18 +659,31 @@ async function refreshAll() {
 }
 
 async function saveLlm() {
-  await api("/api/llm-config", {
+  const button = byId("saveLlmBtn");
+  button.disabled = true;
+  setText("llmConfigStatus", "保存中...");
+  try {
+    await api("/api/llm-config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-      name: byId("providerSelect")?.value || "openai",
-      base_url: byId("baseUrlInput")?.value || "",
-      model: byId("modelSelect")?.value || "",
-      api_key: byId("apiKeyInput")?.value || "",
-      temperature: Number(byId("temperatureInput")?.value || 0.2),
-    }),
-  });
-  await loadAll();
+        name: byId("providerSelect")?.value || "openai",
+        base_url: byId("baseUrlInput")?.value || "",
+        model: byId("modelSelect")?.value || "",
+        // 留空由服务端沿用已保存密钥，不使用掩码作为真实密钥提交。
+        api_key: byId("apiKeyInput")?.value.trim() || null,
+        temperature: Number(byId("temperatureInput")?.value || 0.2),
+      }),
+    });
+    byId("apiKeyInput").value = "";
+    state.llmConfigSignature = null;
+    await loadAll();
+    setText("llmConfigStatus", "配置已长期保存，后续提问优先由 LLM 驱动 Agent；密钥留空可保留原值。");
+  } catch (err) {
+    setText("llmConfigStatus", `保存失败：${err.message}`);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function login() {
@@ -734,8 +782,14 @@ function appendStreamingAssistantMessage() {
       if (!event?.node_id) {
         return;
       }
-      const current = nodeStates.get(event.node_id) || {};
-      nodeStates.set(event.node_id, { ...current, ...event });
+      // 主控按实际行动生成轨迹，不展示未执行的固定节点；每次重试单独保留。
+      const dynamic = event.engine === "LLMController";
+      if (dynamic && !Array.from(nodeStates.values()).some((node) => node.engine === "LLMController")) {
+        nodeStates.clear();
+      }
+      const stepKey = dynamic ? `${event.node_id}:${event.attempt}` : event.node_id;
+      const current = nodeStates.get(stepKey) || {};
+      nodeStates.set(stepKey, { ...current, ...event });
       if (graph) {
         graph.innerHTML = buildAgentGraphHtml(Array.from(nodeStates.values()), true);
       }
@@ -773,7 +827,7 @@ function appendAssistantMessage(result) {
   const answer = result.structured_answer?.raw_answer || result.answer || "";
   const answerBlock = result.generic_result || result.structured_answer ? "" : `<div class="answer">${escapeHtml(answer)}</div>`;
   const requirementAnalysis = buildRequirementAnalysisHtml(result.requirement_analysis);
-  const resultTitle = ({NEEDS_CLARIFICATION: "需求分析", REQUIREMENT_UPDATED: "需求已更新", COMPARISON: "方案比较"})[result.status] || "优化结论";
+  const resultTitle = ({NEEDS_CLARIFICATION: "需求分析", REQUIREMENT_UPDATED: "需求已更新", COMPARISON: "方案比较", AGENT_ERROR: "模型调用失败", AGENT_BUDGET_EXCEEDED: "任务已暂停"})[result.status] || "优化结论";
   const toolNames = (result.tool_names || []).map((name) => `<span>${escapeHtml(name)}</span>`).join("");
   const ragDocs = (result.rag_docs || []).map((name) => `<span>${escapeHtml(name)}</span>`).join("");
   const graphNodes = result.agent_graph?.nodes || [];
@@ -781,7 +835,7 @@ function appendAssistantMessage(result) {
   const graphCard = graphNodes.length
     ? `<div class="agent-graph-card">
         <div class="agent-graph-head">
-          <div><span>Agent 执行图</span><small>LangGraph · ${graphNodes.length} 个节点</small></div>
+          <div><span>Agent 执行图</span><small>${result.agent_graph?.engine === "LLMController" ? "模型自主规划" : "预设工作流"} · ${graphNodes.length} 个步骤</small></div>
           <em class="${graphPassed === false ? "failed" : "passed"}">${graphPassed === false ? "检查异常" : "运行完成"}</em>
         </div>
         ${buildAgentGraphHtml(graphNodes)}
@@ -919,7 +973,7 @@ function buildRequirementAnalysisHtml(brief) {
 }
 
 function buildAgentGraphHtml(nodes, live = false) {
-  // 实时轨道保持固定职责顺序，历史结果则按真实 transition 顺序展示重试。
+  // 固定流程采用职责顺序，模型主控的实时和历史轨迹采用实际执行顺序。
   const orderOf = (node) => live ? node.sequence : (node.transition_sequence || node.sequence);
   const normalized = [...nodes].sort((left, right) => Number(orderOf(left) || 0) - Number(orderOf(right) || 0));
   const stateLabels = {

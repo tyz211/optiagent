@@ -1,11 +1,11 @@
+# 本地环境与自动生成的缓存不进入版本控制。
 .DS_Store
 .idea/
 .venv/
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
 
+# 数据库、训练产物和交付报告需按用途保留，不作为源码提交。
 data/optiagent.sqlite3
 data/rl/*.jsonl
 data/benchmarks/*.json
@@ -32,6 +32,9 @@ docs/*
 !docs/e2e-test-plan.md
 !docs/learning-policy.md
 !docs/two-track-roadmap.md
+!docs/local-small-model-roadmap.md
+!docs/llm-agent-implementation-plan.md
+!docs/llm-agent-runtime.md
 !docs/multi-turn-agent-roadmap.md
 !docs/rl-training-results.md
 !docs/project-status-2026-09-19.md

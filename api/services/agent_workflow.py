@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from operator import add
+import os
 from time import perf_counter
 from typing import Annotated, Any, TypedDict
 
@@ -16,6 +17,7 @@ from api.database import (
     start_agent_step,
     update_run_result,
     touch_conversation,
+    get_active_llm_config,
 )
 from api.services.ask_service import AskExecutionContext, handle_ask, prepare_ask_context
 from api.services.requirement_service import analyze_requirement_turn, build_clarification_result
@@ -54,6 +56,7 @@ class AgentWorkflowState(TypedDict, total=False):
     policy_decisions: Annotated[list[dict[str, Any]], add]
     trace_nodes: Annotated[list[dict[str, Any]], add]
     trajectory_source: str
+    controller_mode: bool
 
 
 NODE_DEFINITIONS = [
@@ -90,8 +93,28 @@ def run_agent_workflow(
     event_callback: AgentEventCallback | None = None,
     recovery_checkpoint: str | None = None,
     trajectory_source: str = "live_workflow",
+    agent_mode: str | None = None,
 ) -> dict[str, Any]:
     """运行 LangGraph 状态图，并返回兼容现有前端的最终结果。"""
+
+    # 模型配置存在时由 LLM 主控行动；无配置仍可运行原有本地演示。
+    from optiagent.llm import llm_config_from_record
+    llm_config = llm_config_from_record(get_active_llm_config(user_id))
+    # 账户已有模型时默认启用主控，服务器旧模式默认值不能压过用户配置。
+    mode = agent_mode or ("auto" if llm_config is not None else os.environ.get("OPTIAGENT_AGENT_MODE", "auto"))
+    if mode not in {"auto", "llm", "legacy"}:
+        raise ValueError("Agent 模式必须为 auto、llm 或 legacy")
+    if mode == "legacy":
+        llm_config = None
+    if mode == "llm" and llm_config is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="LLM 主控模式需要先保存当前用户的模型配置。")
+    if llm_config is not None:
+        from api.services.llm_controller import run_llm_controller
+        touch_conversation(conversation_id, question.splitlines()[0] if question else None)
+        return run_llm_controller(question=question, requested_dataset_id=requested_dataset_id,
+            mcp_config=mcp_config, user_id=user_id, conversation_id=conversation_id,
+            llm_config=llm_config, event_callback=event_callback)
 
     runtime = load_recovery_runtime(recovery_checkpoint)
     # 会话标题来自用户本轮原话，不使用内部生成的规范化 JSON 请求。
@@ -135,6 +158,9 @@ def run_agent_workflow(
             "name": runtime.name,
             "version": runtime.version,
             "decisions": final_state.get("policy_decisions", []),
+        }
+        result["agent_controller"] = {
+            "mode": "legacy", "selection_reason": "explicit_legacy" if mode == "legacy" else "no_model_config",
         }
         run_id = result.get("run_id")
         if (result.get("solution_verification") or {}).get("passed") and result["workflow_verification"].get("passed"):
@@ -189,6 +215,7 @@ def _requirements_node(state: AgentWorkflowState) -> dict[str, Any]:
         requested_dataset_id=state.get("requested_dataset_id"),
         user_id=state.get("user_id"),
         conversation_id=state.get("conversation_id"),
+        use_llm=not state.get("controller_mode", False),
     )
     payload = brief.model_dump(mode="json")
     dialogue_action = brief.dialogue_contract.get("action")
@@ -379,6 +406,9 @@ def _verifier_node(state: AgentWorkflowState) -> dict[str, Any]:
     reward = _deterministic_reward(result, checks, mathematical)
     verification = {
         "scope": "response_contract_and_solution",
+        # 新运输模型的确定不可行需要用户修订供需或禁运条件，重复求解同一输入没有意义。
+        "terminal_failure": ((state.get("problem_spec") or {}).get("template_id") == "transportation"
+                             and result.get("status") == "INFEASIBLE"),
         "passed": contract_passed and (not requires_mathematical_check or mathematical_passed),
         "checks": checks,
         "errors": errors,
