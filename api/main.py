@@ -5,6 +5,7 @@ from io import StringIO
 import json
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 from queue import Empty, Queue
 import time
 
@@ -46,7 +47,7 @@ from api.services.agent_workflow import agent_graph_manifest, run_agent_workflow
 from api.services.repair_demo import router as repair_demo_router
 from api.services.agent_memory_api import router as agent_memory_router
 from optiagent.data import SupplyChainData, normalize_data, validate_data
-from optiagent.llm import DataProfile
+from optiagent.llm import DataProfile, LLMConfig, list_openai_compatible_models, llm_config_from_record
 from optiagent.mcp_client import builtin_mcp_config
 from optiagent.mcp_servers.common import json_safe
 from optiagent.schema_mapping import assemble_facility_data, apply_table_mapping, infer_facility_table, mapping_summary
@@ -75,6 +76,13 @@ class LLMConfigIn(BaseModel):
     # 编辑已有配置可以省略密钥，服务端保留当前账户的已保存值。
     api_key: str | None = None
     temperature: float = 0.2
+
+
+class LLMModelsIn(BaseModel):
+    """查询模型只需地址和凭据，无需先保存占位模型名称。"""
+
+    base_url: str
+    api_key: str | None = None
 
 
 class AskRequest(BaseModel):
@@ -477,6 +485,53 @@ def get_llm_config(x_session_token: str | None = Header(default=None)):
         # 仅回传保存状态，不把实际密钥重新发送到浏览器。
         "has_api_key": bool(config["api_key"].strip()),
     }
+
+
+@app.get("/api/llm-models")
+def get_llm_models(x_session_token: str | None = Header(default=None)):
+    """从当前账户配置的服务读取模型目录，不向浏览器暴露 API Key。"""
+
+    user = get_user_by_token(x_session_token)
+    if x_session_token and not user:
+        raise HTTPException(status_code=401, detail="登录状态已失效，请重新登录。")
+    record = get_active_llm_config(user["id"] if user else None)
+    config = llm_config_from_record(record)
+    if config is None:
+        raise HTTPException(status_code=400, detail="请先保存模型服务配置。")
+    return _read_llm_models(config)
+
+
+@app.post("/api/llm-models")
+def discover_llm_models(request: LLMModelsIn, x_session_token: str | None = Header(default=None)):
+    """查询表单中的服务；旧密钥仅可用于当前账户保存的同一地址。"""
+
+    user = get_user_by_token(x_session_token)
+    if x_session_token and not user:
+        raise HTTPException(status_code=401, detail="登录状态已失效，请重新登录。")
+    base_url = request.base_url.strip().rstrip("/")
+    parsed = urlparse(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise HTTPException(status_code=400, detail="请填写有效的 HTTP 或 HTTPS 模型服务地址。")
+    api_key = (request.api_key or "").strip()
+    record = get_active_llm_config(user["id"] if user else None)
+    if not api_key and record and record["base_url"].strip().rstrip("/") == base_url:
+        api_key = record["api_key"]
+    if not api_key and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        raise HTTPException(status_code=400, detail="该地址没有已保存密钥，请填写 API Key。")
+    return _read_llm_models(LLMConfig(True, api_key, base_url, ""))
+
+
+def _read_llm_models(config: LLMConfig) -> dict:
+    """统一返回安全的目录结果和失败摘要，不回显远端响应正文。"""
+    try:
+        models = list_openai_compatible_models(config)
+    except Exception as exc:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+        if status in {401, 403}:
+            raise HTTPException(status_code=502, detail="模型服务认证失败，请检查 API Key。") from exc
+        raise HTTPException(status_code=502, detail=f"读取模型目录失败：{type(exc).__name__}。") from exc
+    return {"models": models, "base_url": config.base_url}
 
 
 @app.post("/api/ask")

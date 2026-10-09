@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
 import sqlite3
@@ -18,7 +19,7 @@ sys.path.insert(0, str(ROOT))
 from api import database
 from api.database import create_conversation, init_db
 from api.services.llm_controller import ControllerDecision, ControllerLimits, run_llm_controller
-from optiagent.llm import LLMConfig, llm_config_from_record
+from optiagent.llm import LLMConfig, list_openai_compatible_models, llm_config_from_record
 from optiagent.requirement_patch import RequirementEdit, RequirementPatch
 
 
@@ -32,7 +33,11 @@ def main() -> int:
     parser.add_argument('--live', action='store_true', help='使用已经授权复用的现有模型配置执行合成案例')
     parser.add_argument('--user-id', type=int, help='读取指定用户的已有配置；省略时使用匿名作用域配置')
     parser.add_argument('--followup', action='store_true', help='追加结构化修改和已验算方案解释的三轮演示')
+    parser.add_argument('--list-models', action='store_true', help='只查询所选账户服务的真实模型目录')
+    parser.add_argument('--model', help='真实测试时临时选用指定模型，不改动账户配置')
     args = parser.parse_args()
+    if (args.list_models or args.model) and not args.live:
+        parser.error('--list-models 和 --model 必须与 --live 一起使用')
     config = LLMConfig(True, 'demo-placeholder', 'https://example.test/v1', 'scripted-model')
     if args.live:
         path = ROOT / 'data/optiagent.sqlite3'
@@ -45,6 +50,19 @@ def main() -> int:
         if config is None:
             print(json.dumps({'mode': 'live', 'error': '当前作用域没有已有模型配置'}, ensure_ascii=False))
             return 1
+        if args.list_models:
+            # 网络错误只输出类型和 HTTP 状态，禁止回显供应商响应及配置凭据。
+            try:
+                models = list_openai_compatible_models(config)
+            except Exception as exc:
+                response = getattr(exc, 'response', None)
+                print(json.dumps({'mode': 'live', 'error_type': type(exc).__name__,
+                                  'http_status': getattr(response, 'status_code', None)}, ensure_ascii=False))
+                return 1
+            print(json.dumps({'mode': 'live', 'configured_model': config.model, 'models': models}, ensure_ascii=False))
+            return 0
+        if args.model:
+            config = replace(config, model=args.model)
     with tempfile.TemporaryDirectory() as directory, patch.object(database, 'DB_PATH', Path(directory) / 'demo.sqlite3'):
         init_db()
         conversation_id = create_conversation('主控合成演示')['id']

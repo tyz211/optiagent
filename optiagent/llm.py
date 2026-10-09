@@ -27,6 +27,40 @@ class DataProfile:
     llm_used: bool
 
 
+def list_openai_compatible_models(config: LLMConfig, *, timeout: float = 15) -> list[str]:
+    """读取 OpenAI 兼容服务的模型目录，只返回可选择的模型标识。"""
+
+    endpoint = config.base_url.rstrip("/")
+    if endpoint.endswith("/chat/completions"):
+        endpoint = endpoint.removesuffix("/chat/completions")
+    if not endpoint.endswith("/models"):
+        endpoint = f"{endpoint}/models"
+    response = requests.get(
+        endpoint,
+        headers={
+            "Authorization": f"Bearer {config.api_key}",
+            "Content-Type": "application/json",
+        },
+        timeout=timeout,
+        # 防止服务重定向后将查询凭据发送到其他地址。
+        allow_redirects=False,
+    )
+    if 300 <= response.status_code < 400:
+        raise ValueError("模型目录地址发生重定向，请使用最终服务地址。")
+    response.raise_for_status()
+    payload = response.json()
+    records = payload.get("data", payload) if isinstance(payload, dict) else payload
+    if not isinstance(records, list):
+        raise ValueError("模型服务返回的模型目录格式不受支持。")
+    models = []
+    for record in records:
+        if isinstance(record, str) and record.strip():
+            models.append(record.strip())
+        elif isinstance(record, dict) and isinstance(record.get("id"), str) and record["id"].strip():
+            models.append(record["id"].strip())
+    return sorted(set(models), key=str.casefold)
+
+
 def llm_config_from_record(record: Mapping[str, Any] | None) -> LLMConfig | None:
     """将数据库或配置文件记录统一转换为运行时 LLM 配置。"""
 

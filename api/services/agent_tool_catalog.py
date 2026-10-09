@@ -55,7 +55,8 @@ def _can_patch(state, counts) -> bool:
 def _can_read_result(state, counts) -> bool:
     """只在明确解释意图或解释证据失效后读取源方案。"""
     if state.get("analysis_only"):
-        return not state.get("result")
+        # 证据已经读取后必须转入解释，避免主控重复读取同一方案消耗预算。
+        return not state.get("result") and not state.get("result_evidence")
     return bool(explanation_request(state.get("original_question", ""))[0]
                 and not state.get("result") and not state.get("requirements_done"))
 

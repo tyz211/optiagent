@@ -98,7 +98,10 @@
             <input id="apiKeyInput" placeholder="API Key" type="password" />
             <input id="temperatureInput" placeholder="Temperature" value="0.2" />
           </div>
-          <button id="saveLlmBtn" class="primary">保存配置</button>
+          <div class="llm-actions">
+            <button id="loadLlmModelsBtn">读取模型列表</button>
+            <button id="saveLlmBtn" class="primary">保存配置</button>
+          </div>
           <p id="llmConfigStatus" class="drawer-note" role="status" aria-live="polite"></p>
         </section>
 
@@ -144,6 +147,6 @@
         </section>
       </section>
     </main>
-    <script src="/static/app.js?v=20261007-persistent-llm-config-1"></script>
+    <script src="/static/app.js?v=20261008-model-discovery-1"></script>
   </body>
 </html>

@@ -8,12 +8,15 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+
+import requests
 
 from fastapi.testclient import TestClient
 
 from api import database
 from api.main import app
+from optiagent.llm import LLMConfig, list_openai_compatible_models
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -163,6 +166,98 @@ class LLMConfigTests(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         self.assertEqual("legacy", response.json()["agent_controller"]["mode"])
         controller.assert_not_called()
+
+    def test_model_directory_uses_saved_account_key_without_changing_config(self):
+        self.save()
+        before = self.record()
+        response = Mock(status_code=200)
+        response.json.return_value = {"data": [{"id": "model-b"}, {"id": "model-a"}, {"id": "model-b"}]}
+        with patch("optiagent.llm.requests.get", return_value=response) as get:
+            result = self.client.post("/api/llm-models", headers=self.headers,
+                                      json={"base_url": CONFIG["base_url"], "api_key": None})
+        self.assertEqual(200, result.status_code)
+        self.assertEqual(["model-a", "model-b"], result.json()["models"])
+        self.assertEqual(CONFIG["base_url"] + "/models", get.call_args.args[0])
+        self.assertEqual("Bearer " + CONFIG["api_key"], get.call_args.kwargs["headers"]["Authorization"])
+        self.assertFalse(get.call_args.kwargs["allow_redirects"])
+        self.assertNotIn(CONFIG["api_key"], result.text)
+        self.assertEqual(before, self.record())
+
+    def test_new_service_requires_its_own_key_and_does_not_save_query(self):
+        self.save()
+        before = self.record()
+        with patch("api.main.list_openai_compatible_models", return_value=["new-model"]) as discover:
+            denied = self.client.post("/api/llm-models", headers=self.headers,
+                                      json={"base_url": "https://other.test/v1"})
+            self.assertEqual(400, denied.status_code)
+            discover.assert_not_called()
+            result = self.client.post("/api/llm-models", headers=self.headers,
+                                      json={"base_url": "https://other.test/v1", "api_key": "new-query-secret"})
+        self.assertEqual(200, result.status_code)
+        self.assertEqual("new-query-secret", discover.call_args.args[0].api_key)
+        self.assertEqual(before, self.record())
+
+    def test_directory_cannot_borrow_another_account_or_expired_session(self):
+        self.save()
+        other = self.login("模型目录用户乙")
+        with patch("api.main.list_openai_compatible_models") as discover:
+            result = self.client.post("/api/llm-models", headers=other, json={"base_url": CONFIG["base_url"]})
+            self.assertEqual(400, result.status_code)
+            for method in (self.client.get, self.client.post):
+                options = {"json": {"base_url": CONFIG["base_url"]}} if method == self.client.post else {}
+                result = method("/api/llm-models", headers={"X-Session-Token": "expired"}, **options)
+                self.assertEqual(401, result.status_code)
+            discover.assert_not_called()
+
+    def test_local_directory_can_be_queried_before_saving_model(self):
+        with patch("api.main.list_openai_compatible_models", return_value=["local-model"]) as discover:
+            result = self.client.post("/api/llm-models", headers=self.headers,
+                                      json={"base_url": "http://127.0.0.1:11434/v1"})
+        self.assertEqual(200, result.status_code)
+        self.assertEqual("", discover.call_args.args[0].api_key)
+        self.assertIsNone(self.record())
+
+    def test_directory_errors_do_not_expose_service_body_or_credentials(self):
+        self.save()
+        response = Mock(status_code=401)
+        error = requests.HTTPError("secret-service-body " + CONFIG["api_key"], response=response)
+        with patch("api.main.list_openai_compatible_models", side_effect=error):
+            result = self.client.get("/api/llm-models", headers=self.headers)
+        self.assertEqual(502, result.status_code)
+        self.assertIn("认证失败", result.json()["detail"])
+        self.assertNotIn(CONFIG["api_key"], result.text)
+        self.assertNotIn("secret-service-body", result.text)
+
+    def test_directory_rejects_invalid_urls_without_network_request(self):
+        self.save()
+        with patch("api.main.list_openai_compatible_models") as discover:
+            for address in ("", "file:///etc/passwd", "https://user:password@example.test/v1", "https://example.test/v1?key=secret"):
+                with self.subTest(address=address):
+                    result = self.client.post("/api/llm-models", headers=self.headers, json={"base_url": address})
+                    self.assertEqual(400, result.status_code)
+            discover.assert_not_called()
+
+
+class ModelDirectoryParsingTests(unittest.TestCase):
+    """模型目录独立验证兼容响应和 HTTP 边界，不调用外部服务。"""
+
+    def test_full_chat_url_is_normalized_and_model_names_remain_plain_text(self):
+        response = Mock(status_code=200)
+        response.json.return_value = {"data": [{"id": "<model>"}, {"id": ""}, {"id": 42}, "plain-model"]}
+        config = LLMConfig(True, "test-key", "https://example.test/v1/chat/completions/", "")
+        with patch("optiagent.llm.requests.get", return_value=response) as get:
+            models = list_openai_compatible_models(config)
+        self.assertEqual(["<model>", "plain-model"], models)
+        self.assertEqual("https://example.test/v1/models", get.call_args.args[0])
+
+    def test_redirect_and_malformed_directory_are_explicitly_rejected(self):
+        config = LLMConfig(True, "test-key", "https://example.test/v1", "")
+        for status, payload in ((302, {}), (200, {"unexpected": "body"})):
+            response = Mock(status_code=status)
+            response.json.return_value = payload
+            with self.subTest(status=status), patch("optiagent.llm.requests.get", return_value=response):
+                with self.assertRaises(ValueError):
+                    list_openai_compatible_models(config)
 
 
 if __name__ == "__main__":

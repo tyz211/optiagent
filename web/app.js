@@ -36,6 +36,8 @@ const state = {
   asking: false,
   // 只记住公开配置的版本，密钥始终留在服务端，不写入浏览器存储。
   llmConfigSignature: null,
+  // 模型读取响应只更新发起请求时的账户与表单，避免晚到响应覆盖新编辑。
+  llmModelsRequestId: 0,
 };
 
 const fmt = (value) => {
@@ -176,6 +178,7 @@ function restoreLlmConfig(config, userId) {
     return;
   }
   state.llmConfigSignature = signature;
+  state.llmModelsRequestId += 1;
   const providerName = config.configured && providers[config.name] ? config.name : "custom";
   byId("providerSelect").value = config.configured ? providerName : "openai";
   updateModelOptions();
@@ -681,6 +684,46 @@ async function saveLlm() {
     setText("llmConfigStatus", "配置已长期保存，后续提问优先由 LLM 驱动 Agent；密钥留空可保留原值。");
   } catch (err) {
     setText("llmConfigStatus", `保存失败：${err.message}`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function loadLlmModels() {
+  const button = byId("loadLlmModelsBtn");
+  const requestId = ++state.llmModelsRequestId;
+  const token = state.token;
+  const baseUrl = byId("baseUrlInput").value.trim();
+  const apiKey = byId("apiKeyInput").value.trim();
+  button.disabled = true;
+  setText("llmConfigStatus", "正在读取模型列表...");
+  try {
+    const result = await api("/api/llm-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ base_url: baseUrl, api_key: apiKey || null }),
+    });
+    if (requestId !== state.llmModelsRequestId || token !== state.token
+        || baseUrl !== byId("baseUrlInput").value.trim() || apiKey !== byId("apiKeyInput").value.trim()) {
+      return;
+    }
+    const modelSelect = byId("modelSelect");
+    const selectedModel = modelSelect.value;
+    const models = result.models || [];
+    if (!models.length) {
+      throw new Error("模型服务没有返回可用模型。");
+    }
+    // 服务返回的标识用 DOM 文本写入，避免模型名称被解释为 HTML。
+    modelSelect.replaceChildren(...models.map((model) => new Option(model, model)));
+    if (models.includes(selectedModel)) {
+      modelSelect.value = selectedModel;
+    }
+    setText("llmConfigStatus", `已读取 ${models.length} 个模型，请选择后保存配置。`);
+  } catch (err) {
+    if (requestId === state.llmModelsRequestId && token === state.token
+        && baseUrl === byId("baseUrlInput").value.trim() && apiKey === byId("apiKeyInput").value.trim()) {
+      setText("llmConfigStatus", `读取模型失败：${err.message}`);
+    }
   } finally {
     button.disabled = false;
   }
@@ -1268,6 +1311,7 @@ document.querySelectorAll("button[data-panel]").forEach((button) => {
 });
 on("askBtn", "click", ask);
 on("saveLlmBtn", "click", saveLlm);
+on("loadLlmModelsBtn", "click", loadLlmModels);
 on("loginBtn", "click", login);
 on("refreshBtn", "click", refreshAll);
 on("clearHistoryBtn", "click", clearHistory);
